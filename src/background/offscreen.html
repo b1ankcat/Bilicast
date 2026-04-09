@@ -1,0 +1,26 @@
+﻿<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bilicast Offscreen Player</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        color: #fff;
+        font-family: sans-serif;
+      }
+      video {
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <audio id="offscreen-player" preload="auto"></audio>
+    <script type="module" src="./offscreen.js"></script>
+  </body>
+</html>

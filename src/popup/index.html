@@ -1,0 +1,73 @@
+﻿<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bilicast 播放列表</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="popup">
+      <section class="panel row row-controls-category">
+        <div class="row row-progress">
+          <div class="progress-main">
+            <input type="range" id="progress" min="0" max="0" value="0" step="1" />
+            <div class="time-labels">
+              <span id="currentTime">00:00</span>
+              <span class="track-label">进度条</span>
+              <span id="durationTime">00:00</span>
+            </div>
+          </div>
+          <div class="volume-block" aria-label="音量控制">
+            <input type="range" id="volumeSlider" min="0" max="100" value="100" />
+            <div class="volume-labels">
+              <span>音量条</span>
+            </div>
+          </div>
+        </div>
+        <div class="controls-toolbar">
+          <button id="prevBtn" class="control-btn has-tooltip" data-tooltip="上一条" aria-label="上一条">&#9198;</button>
+          <button id="playBtn" class="control-btn primary has-tooltip" data-tooltip="播放 / 暂停" aria-label="播放 / 暂停">&#9654;</button>
+          <button id="nextBtn" class="control-btn has-tooltip" data-tooltip="下一条" aria-label="下一条">&#9197;</button>
+          <button id="modeBtn" class="control-btn has-tooltip" data-tooltip="列表循环" aria-label="播放模式">&#128257;</button>
+          <button id="addCurrentBtn" class="control-btn accent has-tooltip" data-tooltip="添加当前页视频" aria-label="添加当前页视频">＋</button>
+        </div>
+        <div class="category-toolbar">
+          <select id="categorySelect"></select>
+          <button id="deleteCategoryBtn" class="icon-btn has-tooltip" data-tooltip="删除分类" aria-label="删除分类">&#128465;</button>
+          <button id="addCategoryBtn" class="icon-btn accent has-tooltip" data-tooltip="新建分类" aria-label="新建分类">＋</button>
+        </div>
+      </section>
+      <section class="panel row row-list">
+        <div class="list-actions">
+          <label class="bulk-toggle">
+            <input type="checkbox" id="bulkSelectToggle" />
+            多选
+          </label>
+          <button id="bulkDeleteBtn" disabled>批量删除</button>
+        </div>
+        <div id="videoList" class="video-list"></div>
+      </section>
+    </div>
+    <div id="categoryCreatePopover" class="modal-overlay" hidden>
+      <div class="modal-panel">
+        <p>新建分类</p>
+        <input type="text" id="newCategoryInput" placeholder="输入分类名称" />
+        <div class="modal-actions">
+          <button id="cancelCategoryBtn" type="button">取消</button>
+          <button id="confirmCategoryBtn" type="button" class="accent">确定</button>
+        </div>
+      </div>
+    </div>
+    <div id="deleteConfirmDialog" class="modal-overlay" hidden>
+      <div class="modal-panel">
+        <p id="deleteConfirmText">确认删除该分类吗？</p>
+        <div class="modal-actions">
+          <button id="cancelDeleteBtn" type="button">取消</button>
+          <button id="confirmDeleteBtn" type="button" class="accent">删除</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+# Build output
+dist/
+build/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local caches
+.cache/
+.turbo/
+.parcel-cache/
+*.tsbuildinfo
+
+# Extension packaging artifacts
+*.zip
+*.crx
+
+# Editor / IDE
+.vscode/
+.idea/
+.codex
+.claude
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Certificates / keys
+*.pem
+*.key
+*.p12
+*.pfx

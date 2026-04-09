@@ -1,0 +1,17 @@
+{
+  "name": "bilicast",
+  "version": "1.0.0",
+  "description": "Chrome extension that manages Bilibili playlists with background playback.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "clean": "node scripts/build.mjs --clean"
+  },
+  "keywords": [
+    "chrome-extension",
+    "bilibili",
+    "playlist"
+  ],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.8.0"
+}
