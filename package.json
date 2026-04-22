@@ -12,6 +12,6 @@
     "playlist"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "GPL-2.0-only",
   "packageManager": "pnpm@10.8.0"
 }

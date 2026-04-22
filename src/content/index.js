@@ -12,13 +12,10 @@
 function initContentScript(MESSAGE) {
   const BUTTON_ID = "bilicast-add-button";
   const STYLE_ID = "bilicast-style";
-  const SHARE_KEYWORDS = ["分享", "转发", "点击复制", "share", "Share"];
-  const SHARE_DATA_KEYS = ["share", "forward", "copy", "clickcopy", "复制", "转发"];
 
   const popover = new PlaylistPopover();
   const actionButton = createFloatingButton();
   let anchorElement = null;
-  let anchorPlacement = "right";
   let resizeObserver = null;
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -168,14 +165,13 @@ function initContentScript(MESSAGE) {
   }
 
   function mountButton() {
-    const anchorTarget = determineAnchorTarget();
+    const anchorTarget = findToolbarAnchor();
     if (!anchorTarget) {
       hideFloatingButton();
       return;
     }
-    if (anchorElement !== anchorTarget.element) {
-      anchorElement = anchorTarget.element;
-      anchorPlacement = anchorTarget.side;
+    if (anchorElement !== anchorTarget) {
+      anchorElement = anchorTarget;
       if (!resizeObserver) {
         resizeObserver = new ResizeObserver(() => positionButton());
       }
@@ -227,10 +223,7 @@ function initContentScript(MESSAGE) {
     const buttonWidth = actionButton.offsetWidth || 120;
     const offset = 16;
     const top = window.scrollY + rect.top + rect.height / 2 - buttonHeight / 2;
-    const left =
-      anchorPlacement === "left"
-        ? window.scrollX + rect.left - buttonWidth - offset
-        : window.scrollX + rect.right + offset;
+    const left = window.scrollX + rect.right + offset;
     actionButton.style.top = `${Math.max(0, top)}px`;
     actionButton.style.left = `${Math.max(0, left)}px`;
   }
@@ -251,99 +244,13 @@ function initContentScript(MESSAGE) {
     }, 1000);
   }
 
-  function determineAnchorTarget() {
-    const shareButton = findShareButton();
-    if (shareButton) {
-      return { element: shareButton, side: "right" };
+  function findToolbarAnchor() {
+    const toolbarMain = document.querySelector(".video-toolbar-left .video-toolbar-left-main");
+    if (!toolbarMain) {
+      return null;
     }
-    return null;
-  }
-
-  function findShareButton() {
-    const selectors = [
-      ".video-share-wrap",
-      ".video-share-wrap *",
-      ".video-toolbar-right .ops [data-type]",
-      ".video-toolbar-right .ops button",
-      ".video-toolbar-right .ops .tool-item",
-      ".video-toolbar-right .ops a",
-      ".video-toolbar-right .ops span",
-      ".video-toolbar-right .ops div",
-      "#arc_toolbar_report .ops [data-type]",
-      "#arc_toolbar_report .ops button",
-      "#arc_toolbar_report .ops .tool-item",
-      "#arc_toolbar_report .ops a",
-      "#arc_toolbar_report .ops span",
-      "#arc_toolbar_report .ops div",
-      ".video-share-info button",
-      ".video-share-info .share-btn",
-      ".video-share-info span",
-      ".video-share-info div"
-    ];
-    for (const selector of selectors) {
-      const candidates = document.querySelectorAll(selector);
-      for (const element of candidates) {
-        const shareAnchor = getShareAnchor(element);
-        if (shareAnchor && isShareElement(shareAnchor)) {
-          return shareAnchor;
-        }
-      }
-    }
-    return null;
-  }
-
-  function isShareElement(element) {
-    if (!element) return false;
-    const datasetValues = Object.values(element.dataset || {});
-    if (datasetValues.some((value) => containsShareKeyword(value))) {
-      return true;
-    }
-    const dataType = element.getAttribute("data-type") || "";
-    if (containsShareKeyword(dataType)) {
-      return true;
-    }
-    const dataReport = element.getAttribute("data-report");
-    if (dataReport) {
-      try {
-        const reportObj = JSON.parse(dataReport);
-        if (Object.values(reportObj).some((value) => containsShareKeyword(String(value)))) {
-          return true;
-        }
-      } catch {
-        if (containsShareKeyword(dataReport)) {
-          return true;
-        }
-      }
-    }
-    const ariaLabel = element.getAttribute("aria-label") || "";
-    if (containsShareKeyword(ariaLabel)) {
-      return true;
-    }
-    const title = element.getAttribute("title") || "";
-    if (containsShareKeyword(title)) {
-      return true;
-    }
-    const text = (element.textContent || "").replace(/\s+/g, "");
-    return SHARE_KEYWORDS.some((word) => text.includes(word));
-  }
-
-  function containsShareKeyword(value) {
-    if (!value) return false;
-    const lower = value.toLowerCase();
-    return SHARE_KEYWORDS.some((word) => lower.includes(word.toLowerCase())) ||
-      SHARE_DATA_KEYS.some((word) => lower.includes(word.toLowerCase()));
-  }
-
-  function getShareAnchor(element) {
-    if (!element) return null;
-    return (
-      element.closest(".video-share-wrap") ||
-      element.closest("button") ||
-      element.closest(".tool-item") ||
-      element.closest(".ops div") ||
-      element.closest(".ops span") ||
-      element
-    );
+    const items = toolbarMain.querySelectorAll(":scope > .toolbar-left-item-wrap");
+    return items[3] || null;
   }
 
   function collectVideoInfo() {
