@@ -321,26 +321,19 @@ function renderVideoList() {
       selectCell.appendChild(selectBox);
       card.appendChild(selectCell);
     }
-    const cover = document.createElement("img");
-    cover.className = "video-card__cover";
-    cover.src = video.cover || "https://static.hdslb.com/images/base/icons/default.png";
-    cover.alt = video.title;
     const meta = document.createElement("div");
     meta.className = "video-card__meta";
     const title = document.createElement("div");
     title.className = "video-card__title";
     title.textContent = video.title;
-    const author = document.createElement("div");
-    author.className = "video-card__author";
-    author.textContent = video.author;
+    title.title = video.title;
+    meta.appendChild(title);
+    card.appendChild(meta);
+
     const duration = document.createElement("div");
     duration.className = "video-card__duration";
     duration.textContent = formatTime(video.duration || 0);
-    meta.appendChild(title);
-    meta.appendChild(author);
-    meta.appendChild(duration);
-    card.appendChild(cover);
-    card.appendChild(meta);
+    card.appendChild(duration);
 
     const actions = document.createElement("div");
     actions.className = "video-card__actions";

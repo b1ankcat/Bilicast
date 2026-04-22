@@ -21,9 +21,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message.type === MESSAGE.OFFSCREEN_CONTROL) {
-    applyControl(message.payload || {});
-    sendResponse?.({ ok: true });
-    return;
+    applyControl(message.payload || {})
+      .then((result) => sendResponse?.(result || { ok: true }))
+      .catch((error) => {
+        console.warn("Failed to apply control", error);
+        sendResponse?.({ ok: false, message: error?.message || "播放控制失败" });
+      });
+    return true;
   }
 });
 
@@ -152,31 +156,39 @@ function attemptLoad(url, startAt = 0) {
   });
 }
 
-function applyControl(control) {
+async function applyControl(control) {
   switch (control.action) {
-    case "play":
-      player.play().catch((error) => console.warn("play failed", error));
-      break;
+    case "play": {
+      if (!player.src) {
+        return {
+          ok: false,
+          reloadRequired: true,
+          message: "当前播放器没有可恢复音源，需重新拉取"
+        };
+      }
+      await player.play();
+      return { ok: true };
+    }
     case "pause":
       player.pause();
-      break;
+      return { ok: true };
     case "seek":
       if (typeof control.seconds === "number" && !Number.isNaN(control.seconds)) {
         player.currentTime = control.seconds;
       }
-      break;
+      return { ok: true };
     case "stop":
       player.pause();
       player.removeAttribute("src");
       player.load();
-      break;
+      return { ok: true };
     case "volume":
       if (typeof control.value === "number") {
         player.volume = Math.min(1, Math.max(0, control.value));
       }
-      break;
+      return { ok: true };
     default:
-      break;
+      return { ok: true };
   }
 }
 

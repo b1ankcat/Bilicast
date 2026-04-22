@@ -476,7 +476,7 @@ textarea {
 
 .video-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
@@ -486,7 +486,7 @@ textarea {
 }
 
 .video-card.has-selection {
-  grid-template-columns: auto auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 6px;
 }
 
@@ -511,32 +511,29 @@ textarea {
   background: rgba(251, 114, 153, 0.12);
 }
 
-.video-card__cover {
-  width: 52px;
-  height: 30px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-
 .video-card__meta {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 11px;
+  min-width: 0;
+  align-items: flex-start;
 }
 
 .video-card__title {
   font-size: 12px;
   line-height: 1.3;
-}
-
-.video-card__author {
-  color: var(--text-subtle);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 
 .video-card__duration {
+  min-width: 32px;
+  font-size: 11px;
   color: var(--accent);
   font-weight: 600;
+  text-align: right;
 }
 
 .video-card__actions {

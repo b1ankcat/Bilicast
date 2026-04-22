@@ -394,7 +394,8 @@ async function deleteVideoFlow(payload) {
   return { ok: true };
 }
 
-async function ensureAudioStream(categoryId, videoId) {
+async function ensureAudioStream(categoryId, videoId, options = {}) {
+  const forceRefresh = Boolean(options.forceRefresh);
   const state = await ensureState();
   const category = state.categories[categoryId];
   if (!category) {
@@ -404,11 +405,13 @@ async function ensureAudioStream(categoryId, videoId) {
   if (!video) {
     throw new Error("未找到视频");
   }
-  if (video.audioUrl && video.cid) {
+  if (!forceRefresh && video.audioUrl && video.cid) {
     return video;
   }
-  const meta = await fetchVideoMeta(video.bvid);
-  const cid = meta.cid;
+  const meta = video.cid && !forceRefresh
+    ? { cid: video.cid, duration: video.duration }
+    : await fetchVideoMeta(video.bvid);
+  const cid = meta.cid || video.cid;
   const stream = await fetchAudioStream(video.bvid, cid);
   const duration = stream.duration || meta.duration || video.duration;
   await mutateState((draft) => {
@@ -423,7 +426,8 @@ async function ensureAudioStream(categoryId, videoId) {
       audioUrls: Array.isArray(stream.audioUrls) && stream.audioUrls.length
         ? stream.audioUrls
         : targetCategory.videos[index].audioUrls || (stream.audioUrl ? [stream.audioUrl] : []),
-      duration: duration || targetCategory.videos[index].duration
+      duration: duration || targetCategory.videos[index].duration,
+      audioFetchedAt: Date.now()
     };
   });
   const refreshed = await ensureState();
@@ -543,9 +547,7 @@ async function controlPlaybackFlow(action = "play", manual = false) {
   const state = await ensureState();
   if (action === "play") {
     if (state.playback.videoId) {
-      await ensureOffscreenDocument();
-      await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "play" } });
-      await updatePlaybackRuntime({ status: "playing" });
+      await resumePlayback(state);
       return { ok: true };
     }
     const category = state.categories[state.activeCategoryId];
@@ -613,6 +615,15 @@ async function setVolumeFlow(volume) {
 }
 
 async function playVideoById(categoryId, videoId, startAt = 0) {
+  return playVideoByIdInternal(categoryId, videoId, startAt, {
+    forceRefresh: false,
+    allowStreamRefreshRetry: true
+  });
+}
+
+async function playVideoByIdInternal(categoryId, videoId, startAt = 0, options = {}) {
+  const forceRefresh = Boolean(options.forceRefresh);
+  const allowStreamRefreshRetry = options.allowStreamRefreshRetry !== false;
   const state = await ensureState();
   const category = state.categories[categoryId];
   if (!category) {
@@ -622,7 +633,7 @@ async function playVideoById(categoryId, videoId, startAt = 0) {
   if (!video) {
     throw new Error("未找到视频");
   }
-  const resolvedVideo = await ensureAudioStream(categoryId, video.id);
+  const resolvedVideo = await ensureAudioStream(categoryId, video.id, { forceRefresh });
   if (!resolvedVideo?.audioUrl) {
     throw new Error("无法解析音频地址");
   }
@@ -649,6 +660,13 @@ async function playVideoById(categoryId, videoId, startAt = 0) {
     }
   });
   if (!response?.ok) {
+    if (allowStreamRefreshRetry && !forceRefresh) {
+      console.warn("Playback load failed, refreshing audio stream", categoryId, videoId, response?.message);
+      return playVideoByIdInternal(categoryId, videoId, startAt, {
+        forceRefresh: true,
+        allowStreamRefreshRetry: false
+      });
+    }
     throw new Error(response?.message || "音频加载失败");
   }
   await mutateState((draft) => {
@@ -662,6 +680,29 @@ async function playVideoById(categoryId, videoId, startAt = 0) {
       duration: resolvedVideo.duration || draft.playback.duration,
       updatedAt: Date.now()
     };
+  });
+}
+
+async function resumePlayback(state) {
+  const categoryId = state.playback.categoryId || state.activeCategoryId;
+  const videoId = state.playback.videoId;
+  if (!categoryId || !videoId) {
+    throw new Error("没有可恢复的视频");
+  }
+  await ensureOffscreenDocument();
+  const response = await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "play" } });
+  if (response?.ok) {
+    await updatePlaybackRuntime({ status: "playing" });
+    return;
+  }
+  if (response?.reloadRequired) {
+    console.warn("Resume requested stream reload", categoryId, videoId, response?.message);
+  } else {
+    console.warn("Resume failed, refreshing audio stream", categoryId, videoId, response?.message);
+  }
+  await playVideoByIdInternal(categoryId, videoId, state.playback.progress || 0, {
+    forceRefresh: true,
+    allowStreamRefreshRetry: false
   });
 }
 
