@@ -27,6 +27,25 @@ let offscreenCreation = null;
 let offscreenReadyWaiters = [];
 const OFFSCREEN_READY_TIMEOUT = 5000;
 
+function ok(payload = {}) {
+  return { ok: true, ...payload };
+}
+
+function fail(message, payload = {}) {
+  return { ok: false, message, ...payload };
+}
+
+function isFailure(result) {
+  return result?.ok === false;
+}
+
+function messageFromError(error, fallback) {
+  if (typeof error === "string") {
+    return error;
+  }
+  return error?.message || fallback;
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   await initializeState();
   await ensureRequestRules();
@@ -98,10 +117,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   handler(message, sender)
-    .then((result) => sendResponse?.(result))
+    .then((result) => sendResponse?.(result ?? ok()))
     .catch((error) => {
-      console.error("Message handler failed", message.type, error);
-      sendResponse?.({ ok: false, message: error.message });
+      sendResponse?.(fail(messageFromError(error, "操作失败")));
     });
   return true;
 });
@@ -148,9 +166,7 @@ async function ensureRequestRules() {
       removeRuleIds: AUDIO_REFERER_RULES.map((rule) => rule.id),
       addRules: ruleDefinitions
     });
-  } catch (error) {
-    console.warn("Failed to update DNR rules", error);
-  }
+  } catch {}
 }
 
 async function updatePlaybackRefererRules(refererValue) {
@@ -194,9 +210,7 @@ async function updatePlaybackRefererRules(refererValue) {
       removeRuleIds,
       addRules
     });
-  } catch (error) {
-    console.warn("Failed to update playback referer", error);
-  }
+  } catch {}
 }
 
 function deepClone(value) {
@@ -256,9 +270,21 @@ async function pushSnapshot() {
   for (const port of popupPorts) {
     try {
       port.postMessage({ type: MESSAGE.STORAGE_PUSH, payload: snapshot });
-    } catch (error) {
-      console.warn("Failed to update popup", error);
-    }
+    } catch {}
+  }
+}
+
+function pushPopupFeedback(message, isError = true) {
+  if (!popupPorts.size || !message) {
+    return;
+  }
+  for (const port of popupPorts) {
+    try {
+      port.postMessage({
+        type: MESSAGE.POPUP_FEEDBACK,
+        payload: { message, isError }
+      });
+    } catch {}
   }
 }
 
@@ -287,7 +313,7 @@ async function listCategorySummary() {
       name: category.name,
       count: category.videos.length
     }));
-  return { ok: true, categories, activeCategoryId: state.activeCategoryId };
+  return ok({ categories, activeCategoryId: state.activeCategoryId });
 }
 
 async function createCategoryFlow(name) {
@@ -298,100 +324,96 @@ async function createCategoryFlow(name) {
     draft.categoryOrder.push(newCategory.id);
     draft.activeCategoryId = newCategory.id;
   });
-  return { ok: true, category: newCategory };
+  return ok({ category: newCategory });
 }
 
 async function deleteCategoryFlow(categoryId) {
   if (!categoryId) {
-    throw new Error("categoryId is required");
+    return fail("categoryId is required");
   }
   if (categoryId === DEFAULT_CATEGORY_ID) {
-    throw new Error("默认分类无法删除");
+    return fail("默认分类无法删除");
+  }
+  const draft = deepClone(await ensureState());
+  if (!draft.categories[categoryId]) {
+    return fail("分类不存在");
+  }
+  const remaining = draft.categoryOrder.filter((id) => id !== categoryId);
+  if (!remaining.length) {
+    return fail("至少保留一个分类");
   }
   let shouldStopPlayback = false;
-  await mutateState((draft) => {
-    if (!draft.categories[categoryId]) {
-      throw new Error("分类不存在");
-    }
-    const remaining = draft.categoryOrder.filter((id) => id !== categoryId);
-    if (!remaining.length) {
-      throw new Error("至少保留一个分类");
-    }
-    delete draft.categories[categoryId];
-    draft.categoryOrder = remaining;
-    if (draft.activeCategoryId === categoryId) {
-      draft.activeCategoryId = remaining[0];
-    }
-    if (draft.playback.categoryId === categoryId) {
-      draft.playback.categoryId = null;
-      draft.playback.videoId = null;
-      draft.playback.status = "paused";
-      shouldStopPlayback = true;
-    }
-  });
-  if (shouldStopPlayback) {
-    await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch((error) =>
-      console.warn("Failed to stop playback after deleting category", error)
-    );
+  delete draft.categories[categoryId];
+  draft.categoryOrder = remaining;
+  if (draft.activeCategoryId === categoryId) {
+    draft.activeCategoryId = remaining[0];
   }
-  return { ok: true };
+  if (draft.playback.categoryId === categoryId) {
+    draft.playback.categoryId = null;
+    draft.playback.videoId = null;
+    draft.playback.status = "paused";
+    shouldStopPlayback = true;
+  }
+  await setState(draft);
+  if (shouldStopPlayback) {
+    await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch(() => {});
+  }
+  return ok();
 }
 
 async function addVideoFlow(payload) {
   if (!payload?.video) {
-    throw new Error("缺少视频数据");
+    return fail("缺少视频数据");
   }
   const targetCategoryId = payload.categoryId;
   const videoEntry = createVideoEntry(payload.video);
   const enrichedVideo = await ensureVideoMeta(videoEntry);
-  await mutateState((draft) => {
-    const category = draft.categories[targetCategoryId] || draft.categories[draft.activeCategoryId] || draft.categories[DEFAULT_CATEGORY_ID];
-    if (!category) {
-      throw new Error("未找到分类");
-    }
-    const existingIndex = category.videos.findIndex((video) => video.id === enrichedVideo.id);
-    if (existingIndex >= 0) {
-      category.videos.splice(existingIndex, 1, enrichedVideo);
-    } else {
-      category.videos.unshift(enrichedVideo);
-    }
-    if (!draft.activeCategoryId) {
-      draft.activeCategoryId = category.id;
-    }
-  });
-  return { ok: true, video: enrichedVideo };
+  const draft = deepClone(await ensureState());
+  const category = draft.categories[targetCategoryId] || draft.categories[draft.activeCategoryId] || draft.categories[DEFAULT_CATEGORY_ID];
+  if (!category) {
+    return fail("未找到分类");
+  }
+  const existingIndex = category.videos.findIndex((video) => video.id === enrichedVideo.id);
+  if (existingIndex >= 0) {
+    category.videos.splice(existingIndex, 1, enrichedVideo);
+  } else {
+    category.videos.unshift(enrichedVideo);
+  }
+  if (!draft.activeCategoryId) {
+    draft.activeCategoryId = category.id;
+  }
+  await setState(draft);
+  return ok({ video: enrichedVideo });
 }
 
 async function deleteVideoFlow(payload) {
   const categoryId = payload?.categoryId;
   const videoId = payload?.videoId;
   if (!categoryId || !videoId) {
-    throw new Error("缺少分类或视频信息");
+    return fail("缺少分类或视频信息");
+  }
+  const draft = deepClone(await ensureState());
+  const category = draft.categories[categoryId];
+  if (!category) {
+    return fail("分类不存在");
+  }
+  const index = category.videos.findIndex((video) => video.id === videoId);
+  if (index === -1) {
+    return fail("视频不存在");
   }
   let shouldStopPlayback = false;
-  await mutateState((draft) => {
-    const category = draft.categories[categoryId];
-    if (!category) {
-      throw new Error("分类不存在");
-    }
-    const index = category.videos.findIndex((video) => video.id === videoId);
-    if (index === -1) {
-      throw new Error("视频不存在");
-    }
-    category.videos.splice(index, 1);
-    if (draft.playback.videoId === videoId) {
-      draft.playback.videoId = null;
-      draft.playback.status = "paused";
-      draft.playback.progress = 0;
-      shouldStopPlayback = true;
-    }
-  });
-  if (shouldStopPlayback) {
-    await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch((error) =>
-      console.warn("Failed to stop playback after deleting video", error)
-    );
+  category.videos.splice(index, 1);
+  if (draft.playback.videoId === videoId) {
+    draft.playback.videoId = null;
+    draft.playback.status = "paused";
+    draft.playback.progress = 0;
+    shouldStopPlayback = true;
   }
-  return { ok: true };
+  await setState(draft);
+  if (shouldStopPlayback) {
+    await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch(() => {});
+  }
+  return ok();
 }
 
 async function ensureAudioStream(categoryId, videoId, options = {}) {
@@ -399,20 +421,28 @@ async function ensureAudioStream(categoryId, videoId, options = {}) {
   const state = await ensureState();
   const category = state.categories[categoryId];
   if (!category) {
-    throw new Error("分类不存在");
+    return fail("分类不存在");
   }
   const video = category.videos.find((item) => item.id === videoId);
   if (!video) {
-    throw new Error("未找到视频");
+    return fail("未找到视频");
   }
   if (!forceRefresh && video.audioUrl && video.cid) {
-    return video;
+    return ok({ video });
   }
-  const meta = video.cid && !forceRefresh
-    ? { cid: video.cid, duration: video.duration }
+  const metaResult = video.cid && !forceRefresh
+    ? ok({ meta: { cid: video.cid, duration: video.duration } })
     : await fetchVideoMeta(video.bvid);
+  if (isFailure(metaResult)) {
+    return metaResult;
+  }
+  const meta = metaResult.meta;
   const cid = meta.cid || video.cid;
-  const stream = await fetchAudioStream(video.bvid, cid);
+  const streamResult = await fetchAudioStream(video.bvid, cid);
+  if (isFailure(streamResult)) {
+    return streamResult;
+  }
+  const stream = streamResult.stream;
   const duration = stream.duration || meta.duration || video.duration;
   await mutateState((draft) => {
     const targetCategory = draft.categories[categoryId];
@@ -431,105 +461,118 @@ async function ensureAudioStream(categoryId, videoId, options = {}) {
     };
   });
   const refreshed = await ensureState();
-  return refreshed.categories[categoryId].videos.find((item) => item.id === videoId);
+  const refreshedVideo = refreshed.categories[categoryId]?.videos.find((item) => item.id === videoId);
+  if (!refreshedVideo) {
+    return fail("未找到视频");
+  }
+  return ok({ video: refreshedVideo });
 }
 
 async function fetchVideoMeta(bvid) {
-  const endpoint = new URL("https://api.bilibili.com/x/web-interface/view");
-  endpoint.searchParams.set("bvid", bvid);
-  const res = await fetch(endpoint.toString(), { headers: API_HEADERS });
-  const json = await res.json();
-  if (json.code !== 0) {
-    throw new Error(json.message || "获取视频信息失败");
+  try {
+    const endpoint = new URL("https://api.bilibili.com/x/web-interface/view");
+    endpoint.searchParams.set("bvid", bvid);
+    const res = await fetch(endpoint.toString(), { headers: API_HEADERS });
+    const json = await res.json();
+    if (json.code !== 0) {
+      return fail(json.message || "获取视频信息失败");
+    }
+    return ok({
+      meta: {
+        cid: json.data?.cid,
+        duration: json.data?.duration
+      }
+    });
+  } catch (error) {
+    return fail(messageFromError(error, "获取视频信息失败"));
   }
-  return {
-    cid: json.data?.cid,
-    duration: json.data?.duration
-  };
 }
 
 async function ensureVideoMeta(video) {
   if (video.duration && video.duration > 0 && video.cid) {
     return video;
   }
-  try {
-    const meta = await fetchVideoMeta(video.bvid);
+  const metaResult = await fetchVideoMeta(video.bvid);
+  if (!isFailure(metaResult)) {
+    const meta = metaResult.meta;
     return {
       ...video,
       duration: meta.duration || video.duration,
       cid: meta.cid || video.cid
     };
-  } catch (error) {
-    console.warn("Failed to fetch video meta", error);
-    return video;
   }
+  return video;
 }
 
 async function fetchAudioStream(bvid, cid) {
-  const endpoint = new URL("https://api.bilibili.com/x/player/playurl");
-  endpoint.searchParams.set("bvid", bvid);
-  if (cid) endpoint.searchParams.set("cid", cid);
-  endpoint.searchParams.set("fnval", "16");
-  endpoint.searchParams.set("fnver", "0");
-  endpoint.searchParams.set("fourk", "0");
-  const res = await fetch(endpoint.toString(), { headers: API_HEADERS });
-  const json = await res.json();
-  if (json.code !== 0) {
-    throw new Error(json.message || "获取播放地址失败");
-  }
-  const data = json.data || {};
-  const dash = data.dash || {};
-  const urls = [];
-  const seen = new Set();
-  const pushUrl = (value) => {
-    if (typeof value !== "string") {
-      return;
+  try {
+    const endpoint = new URL("https://api.bilibili.com/x/player/playurl");
+    endpoint.searchParams.set("bvid", bvid);
+    if (cid) endpoint.searchParams.set("cid", cid);
+    endpoint.searchParams.set("fnval", "16");
+    endpoint.searchParams.set("fnver", "0");
+    endpoint.searchParams.set("fourk", "0");
+    const res = await fetch(endpoint.toString(), { headers: API_HEADERS });
+    const json = await res.json();
+    if (json.code !== 0) {
+      return fail(json.message || "获取播放地址失败");
     }
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) {
-      return;
-    }
-    seen.add(trimmed);
-    urls.push(trimmed);
-  };
-  const dashAudios = [
-    ...(Array.isArray(dash.audio) ? dash.audio : []),
-    ...(Array.isArray(dash.dolby?.audio) ? dash.dolby.audio : []),
-    ...(Array.isArray(dash.flac?.audio) ? dash.flac.audio : [])
-  ];
-  for (const track of dashAudios) {
-    pushUrl(track?.baseUrl);
-    if (Array.isArray(track?.backupUrl)) {
-      track.backupUrl.forEach(pushUrl);
-    }
-  }
-  if (Array.isArray(data.durl)) {
-    for (const segment of data.durl) {
-      pushUrl(segment?.url);
-      if (Array.isArray(segment?.backup_url)) {
-        segment.backup_url.forEach(pushUrl);
+    const data = json.data || {};
+    const dash = data.dash || {};
+    const urls = [];
+    const seen = new Set();
+    const pushUrl = (value) => {
+      if (typeof value !== "string") {
+        return;
+      }
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) {
+        return;
+      }
+      seen.add(trimmed);
+      urls.push(trimmed);
+    };
+    const dashAudios = [
+      ...(Array.isArray(dash.audio) ? dash.audio : []),
+      ...(Array.isArray(dash.dolby?.audio) ? dash.dolby.audio : []),
+      ...(Array.isArray(dash.flac?.audio) ? dash.flac.audio : [])
+    ];
+    for (const track of dashAudios) {
+      pushUrl(track?.baseUrl);
+      if (Array.isArray(track?.backupUrl)) {
+        track.backupUrl.forEach(pushUrl);
       }
     }
+    if (Array.isArray(data.durl)) {
+      for (const segment of data.durl) {
+        pushUrl(segment?.url);
+        if (Array.isArray(segment?.backup_url)) {
+          segment.backup_url.forEach(pushUrl);
+        }
+      }
+    }
+    const audioUrl = urls[0];
+    if (!audioUrl) {
+      return fail("未找到音频流");
+    }
+    const duration = dash.duration || (data.durl?.[0]?.length ? data.durl[0].length / 1000 : undefined);
+    return ok({ stream: { audioUrl, audioUrls: urls, duration } });
+  } catch (error) {
+    return fail(messageFromError(error, "获取播放地址失败"));
   }
-  const audioUrl = urls[0];
-  if (!audioUrl) {
-    throw new Error("未找到音频流");
-  }
-  const duration = dash.duration || (data.durl?.[0]?.length ? data.durl[0].length / 1000 : undefined);
-  return { audioUrl, audioUrls: urls, duration };
 }
 
 async function selectCategoryFlow(categoryId) {
   if (!categoryId) {
-    throw new Error("categoryId 不能为空");
+    return fail("categoryId 不能为空");
   }
-  await mutateState((draft) => {
-    if (!draft.categories[categoryId]) {
-      throw new Error("分类不存在");
-    }
-    draft.activeCategoryId = categoryId;
-  });
-  return { ok: true };
+  const draft = deepClone(await ensureState());
+  if (!draft.categories[categoryId]) {
+    return fail("分类不存在");
+  }
+  draft.activeCategoryId = categoryId;
+  await setState(draft);
+  return ok();
 }
 
 async function playVideoFlow(payload) {
@@ -537,81 +580,77 @@ async function playVideoFlow(payload) {
   const categoryId = payload?.categoryId || state.activeCategoryId;
   const videoId = payload?.videoId || state.categories[categoryId]?.videos[0]?.id;
   if (!categoryId || !videoId) {
-    throw new Error("没有可播放的视频");
+    return fail("没有可播放的视频");
   }
-  await playVideoById(categoryId, videoId, payload?.startAt || 0);
-  return { ok: true };
+  return playVideoById(categoryId, videoId, payload?.startAt || 0);
 }
 
 async function controlPlaybackFlow(action = "play", manual = false) {
   const state = await ensureState();
   if (action === "play") {
     if (state.playback.videoId) {
-      await resumePlayback(state);
-      return { ok: true };
+      return resumePlayback(state);
     }
     const category = state.categories[state.activeCategoryId];
     const firstVideo = category?.videos[0];
     if (firstVideo) {
-      await playVideoById(state.activeCategoryId, firstVideo.id, 0);
-      return { ok: true };
+      return playVideoById(state.activeCategoryId, firstVideo.id, 0);
     }
-    throw new Error("当前分类没有视频");
+    return fail("当前分类没有视频");
   }
 
   if (action === "pause") {
     await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "pause" } });
     await updatePlaybackRuntime({ status: "paused" });
-    return { ok: true };
+    return ok();
   }
 
   if (action === "next" || action === "previous") {
     const direction = action === "next" ? 1 : -1;
     const nextTarget = computeNextTrack(await ensureState(), direction, { manual });
     if (!nextTarget) {
-      throw new Error("没有更多视频");
+      return fail("没有更多视频");
     }
-    await playVideoById(nextTarget.categoryId, nextTarget.videoId, 0);
-    return { ok: true };
+    return playVideoById(nextTarget.categoryId, nextTarget.videoId, 0);
   }
 
-  throw new Error(`未知操作 ${action}`);
+  return fail(`未知操作 ${action}`);
 }
 
 async function setModeFlow(mode) {
   if (!mode) {
-    throw new Error("缺少播放模式");
+    return fail("缺少播放模式");
   }
   const allowedModes = new Set(["single", "list", "all", "shuffle"]);
   if (!allowedModes.has(mode)) {
-    throw new Error("不支持的播放模式");
+    return fail("不支持的播放模式");
   }
   await mutateState((draft) => {
     draft.playback.mode = mode;
   });
-  return { ok: true };
+  return ok();
 }
 
 async function seekFlow(seconds) {
   if (typeof seconds !== "number" || Number.isNaN(seconds)) {
-    throw new Error("拖动时间无效");
+    return fail("拖动时间无效");
   }
   await ensureOffscreenDocument();
   await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "seek", seconds } });
   await updatePlaybackRuntime({ progress: seconds });
-  return { ok: true };
+  return ok();
 }
 
 async function setVolumeFlow(volume) {
   const value = typeof volume === "number" ? Math.min(1, Math.max(0, volume)) : null;
   if (value === null) {
-    throw new Error("音量设置无效");
+    return fail("音量设置无效");
   }
   await mutateState((draft) => {
     draft.playback.volume = value;
   });
   await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "volume", value } });
-  return { ok: true };
+  return ok();
 }
 
 async function playVideoById(categoryId, videoId, startAt = 0) {
@@ -627,15 +666,19 @@ async function playVideoByIdInternal(categoryId, videoId, startAt = 0, options =
   const state = await ensureState();
   const category = state.categories[categoryId];
   if (!category) {
-    throw new Error("分类不存在");
+    return fail("分类不存在");
   }
   const video = category.videos.find((item) => item.id === videoId);
   if (!video) {
-    throw new Error("未找到视频");
+    return fail("未找到视频");
   }
-  const resolvedVideo = await ensureAudioStream(categoryId, video.id, { forceRefresh });
+  const streamResult = await ensureAudioStream(categoryId, video.id, { forceRefresh });
+  if (isFailure(streamResult)) {
+    return streamResult;
+  }
+  const resolvedVideo = streamResult.video;
   if (!resolvedVideo?.audioUrl) {
-    throw new Error("无法解析音频地址");
+    return fail("无法解析音频地址");
   }
   await ensureOffscreenDocument();
   const referer = buildVideoReferer(resolvedVideo) || sanitizeReferer(resolvedVideo.url);
@@ -646,7 +689,7 @@ async function playVideoByIdInternal(categoryId, videoId, startAt = 0, options =
       ? [resolvedVideo.audioUrl]
       : [];
   if (!candidateUrls.length) {
-    throw new Error("缺少音频地址");
+    return fail("缺少音频地址");
   }
   const response = await queueOffscreenMessage({
     type: MESSAGE.OFFSCREEN_LOAD,
@@ -658,16 +701,15 @@ async function playVideoByIdInternal(categoryId, videoId, startAt = 0, options =
       cover: resolvedVideo.cover,
       startAt
     }
-  });
+  }).catch((error) => fail(messageFromError(error, "音频加载失败")));
   if (!response?.ok) {
     if (allowStreamRefreshRetry && !forceRefresh) {
-      console.warn("Playback load failed, refreshing audio stream", categoryId, videoId, response?.message);
       return playVideoByIdInternal(categoryId, videoId, startAt, {
         forceRefresh: true,
         allowStreamRefreshRetry: false
       });
     }
-    throw new Error(response?.message || "音频加载失败");
+    return fail(response?.message || "音频加载失败");
   }
   await mutateState((draft) => {
     draft.activeCategoryId = categoryId;
@@ -681,26 +723,24 @@ async function playVideoByIdInternal(categoryId, videoId, startAt = 0, options =
       updatedAt: Date.now()
     };
   });
+  return ok();
 }
 
 async function resumePlayback(state) {
   const categoryId = state.playback.categoryId || state.activeCategoryId;
   const videoId = state.playback.videoId;
   if (!categoryId || !videoId) {
-    throw new Error("没有可恢复的视频");
+    return fail("没有可恢复的视频");
   }
   await ensureOffscreenDocument();
-  const response = await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "play" } });
+  const response = await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "play" } }).catch((error) =>
+    fail(messageFromError(error, "恢复播放失败"))
+  );
   if (response?.ok) {
     await updatePlaybackRuntime({ status: "playing" });
-    return;
+    return ok();
   }
-  if (response?.reloadRequired) {
-    console.warn("Resume requested stream reload", categoryId, videoId, response?.message);
-  } else {
-    console.warn("Resume failed, refreshing audio stream", categoryId, videoId, response?.message);
-  }
-  await playVideoByIdInternal(categoryId, videoId, state.playback.progress || 0, {
+  return playVideoByIdInternal(categoryId, videoId, state.playback.progress || 0, {
     forceRefresh: true,
     allowStreamRefreshRetry: false
   });
@@ -788,8 +828,7 @@ function buildVideoReferer(video) {
     url.searchParams.set("p", page);
     url.searchParams.set("t", "0");
     return url.toString();
-  } catch (error) {
-    console.warn("Failed to build referer", error);
+  } catch {
     return null;
   }
 }
@@ -818,18 +857,27 @@ function handleOffscreenReady() {
 }
 
 function handleOffscreenState(payload = {}) {
+  if (payload?.error) {
+    pushPopupFeedback(payload.error, true);
+  }
   updatePlaybackRuntime({
     progress: typeof payload.currentTime === "number" ? payload.currentTime : undefined,
     duration: typeof payload.duration === "number" ? payload.duration : undefined,
     status: payload.paused ? "paused" : "playing"
-  }).catch((error) => console.error("Failed to sync playback", error));
+  }).catch(() => {});
 }
 
 function handleOffscreenEnded() {
-  updatePlaybackRuntime({ status: "paused", progress: 0 }).catch((error) =>
-    console.error("Failed to stop playback", error)
-  );
-  controlPlaybackFlow("next").catch((error) => console.error("Auto next failed", error));
+  updatePlaybackRuntime({ status: "paused", progress: 0 }).catch(() => {});
+  controlPlaybackFlow("next")
+    .then((result) => {
+      if (isFailure(result)) {
+        if (result.message && result.message !== "没有更多视频") {
+          pushPopupFeedback(result.message, true);
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 async function ensureOffscreenDocument(options = {}) {
@@ -858,7 +906,7 @@ async function ensureOffscreenDocument(options = {}) {
     return true;
   } catch (error) {
     rejectOffscreenReadyWaiters(error);
-    throw error;
+    return Promise.reject(messageFromError(error, "offscreen 初始化失败"));
   } finally {
     offscreenCreation = null;
   }
@@ -873,13 +921,11 @@ async function dispatchOffscreenMessage(message, retried = false) {
     return await chrome.runtime.sendMessage({ ...message, target: "offscreen" });
   } catch (error) {
     if (!retried && isMissingOffscreenReceiverError(error)) {
-      console.warn("Offscreen receiver missing, recreating document");
       offscreenReady = false;
       await ensureOffscreenDocument({ forceRecreate: true });
       return dispatchOffscreenMessage(message, true);
     }
-    console.error("Failed to talk to offscreen", error);
-    throw error;
+    return Promise.reject(messageFromError(error, "与播放组件通信失败"));
   }
 }
 
@@ -906,7 +952,7 @@ async function createOffscreenDocument() {
       offscreenReady = true;
       return;
     }
-    throw error;
+    return Promise.reject(messageFromError(error, "创建 offscreen 失败"));
   }
   await waitForOffscreenReady();
 }
@@ -917,9 +963,7 @@ async function closeOffscreenDocument() {
   }
   try {
     await chrome.offscreen.closeDocument();
-  } catch (error) {
-    console.warn("Failed to close offscreen document", error);
-  }
+  } catch {}
 }
 
 function waitForOffscreenReady(timeout = OFFSCREEN_READY_TIMEOUT) {
@@ -929,7 +973,7 @@ function waitForOffscreenReady(timeout = OFFSCREEN_READY_TIMEOUT) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       offscreenReadyWaiters = offscreenReadyWaiters.filter((entry) => entry.resolve !== resolve);
-      reject(new Error("等待 offscreen 就绪超时"));
+      reject("等待 offscreen 就绪超时");
     }, timeout);
     offscreenReadyWaiters.push({ resolve, reject, timer });
   });

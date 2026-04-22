@@ -49,6 +49,7 @@ const feedbackEl = document.getElementById("categoryFeedback");
 
 let seeking = false;
 let pendingConfirmAction = null;
+let feedbackTimer = null;
 const bulkSelection = {
   enabled: false,
   categoryId: null,
@@ -66,13 +67,14 @@ const port = chrome.runtime.connect({ name: "popup" });
 port.onMessage.addListener((message) => {
   if (message?.type === MESSAGE.STORAGE_PUSH) {
     refreshState(message.payload);
+    return;
+  }
+  if (message?.type === MESSAGE.POPUP_FEEDBACK) {
+    setFeedback(message.payload?.message, message.payload?.isError !== false);
   }
 });
 
-chrome.runtime
-  .sendMessage({ type: MESSAGE.POPUP_INIT })
-  .then((snapshot) => refreshState(snapshot))
-  .catch((error) => setFeedback(error.message || "无法初始化", true));
+initializePopup();
 
 progressEl.addEventListener("input", () => {
   seeking = true;
@@ -85,50 +87,53 @@ progressEl.addEventListener("input", () => {
     }
     seeking = false;
     const seconds = Number(progressEl.value);
-    chrome.runtime.sendMessage({
-      type: MESSAGE.POPUP_SEEK,
-      payload: { seconds }
-    });
+    sendRuntimeCommand(
+      {
+        type: MESSAGE.POPUP_SEEK,
+        payload: { seconds }
+      },
+      "拖动时间无效"
+    ).then(handleResultMessage);
   });
 });
 
 playBtn.addEventListener("click", () => {
   const action = state.playback.status === "playing" ? "pause" : "play";
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_CONTROL, payload: { action } })
-    .catch((error) => setFeedback(error.message || "播放失败", true));
+  sendRuntimeCommand({ type: MESSAGE.POPUP_CONTROL, payload: { action } }, "播放失败").then(handleResultMessage);
 });
 
 prevBtn.addEventListener("click", () => {
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_CONTROL, payload: { action: "previous", manual: true } })
-    .catch((error) => setFeedback(error.message || "没有上一条", true));
+  sendRuntimeCommand(
+    { type: MESSAGE.POPUP_CONTROL, payload: { action: "previous", manual: true } },
+    "没有上一条"
+  ).then(handleResultMessage);
 });
 
 nextBtn.addEventListener("click", () => {
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_CONTROL, payload: { action: "next", manual: true } })
-    .catch((error) => setFeedback(error.message || "没有下一条", true));
+  sendRuntimeCommand(
+    { type: MESSAGE.POPUP_CONTROL, payload: { action: "next", manual: true } },
+    "没有下一条"
+  ).then(handleResultMessage);
 });
 
 modeBtn.addEventListener("click", () => {
   const ids = PLAYBACK_MODES.map((mode) => mode.id);
   const currentIndex = ids.indexOf(state.playback.mode);
   const nextMode = ids[(currentIndex + 1) % ids.length];
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_SET_MODE, payload: { mode: nextMode } })
-    .catch((error) => setFeedback(error.message || "切换模式失败", true));
+  sendRuntimeCommand({ type: MESSAGE.POPUP_SET_MODE, payload: { mode: nextMode } }, "切换模式失败").then(
+    handleResultMessage
+  );
 });
 
 addCurrentBtn.addEventListener("click", () => {
-  addCurrentVideoToList().catch((error) => setFeedback(error.message || "添加失败", true));
+  addCurrentVideoToList();
 });
 
 volumeSlider?.addEventListener("input", () => {
   const value = Number(volumeSlider.value) / 100;
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_SET_VOLUME, payload: { volume: value } })
-    .catch((error) => setFeedback(error.message || "音量调整失败", true));
+  sendRuntimeCommand({ type: MESSAGE.POPUP_SET_VOLUME, payload: { volume: value } }, "音量调整失败").then(
+    handleResultMessage
+  );
 });
 
 bulkToggle?.addEventListener("change", () => {
@@ -170,9 +175,9 @@ categorySelect.addEventListener("change", () => {
     bulkSelection.ids.clear();
     updateBulkUI();
   }
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.POPUP_SELECT_CATEGORY, payload: { categoryId } })
-    .catch((error) => setFeedback(error.message || "切换失败", true));
+  sendRuntimeCommand({ type: MESSAGE.POPUP_SELECT_CATEGORY, payload: { categoryId } }, "切换失败").then(
+    handleResultMessage
+  );
 });
 
 addCategoryBtn.addEventListener("click", () => {
@@ -232,10 +237,13 @@ deleteCategoryBtn.addEventListener("click", () => {
   const category = state.categories.find((item) => item.id === categoryId);
   const name = category?.name ? `「${category.name}」` : "该分类";
   openConfirmDialog(`确认删除${name}吗？`, () => {
-    chrome.runtime
-      .sendMessage({ type: MESSAGE.PLAYLIST_DELETE_CATEGORY, payload: { categoryId } })
-      .then(() => setFeedback("已删除分类"))
-      .catch((error) => setFeedback(error.message || "删除失败", true));
+    sendRuntimeCommand({ type: MESSAGE.PLAYLIST_DELETE_CATEGORY, payload: { categoryId } }, "删除失败").then((result) => {
+      if (!result.ok) {
+        setFeedback(result.message, true);
+        return;
+      }
+      setFeedback("已删除分类");
+    });
   });
 });
 
@@ -341,12 +349,13 @@ function renderVideoList() {
     playButton.textContent = "播放";
     playButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      chrome.runtime
-        .sendMessage({
+      sendRuntimeCommand(
+        {
           type: MESSAGE.POPUP_PLAY_VIDEO,
           payload: { categoryId: activeCategory.id, videoId: video.id }
-        })
-        .catch((error) => setFeedback(error.message || "播放失败", true));
+        },
+        "播放失败"
+      ).then(handleResultMessage);
     });
     const deleteButton = document.createElement("button");
     deleteButton.textContent = "删除";
@@ -354,9 +363,13 @@ function renderVideoList() {
       event.stopPropagation();
       const message = `确认删除「${video.title}」吗？`;
       openConfirmDialog(message, () => {
-        deleteVideo(activeCategory.id, video.id)
-          .then(() => setFeedback("已删除视频"))
-          .catch((error) => setFeedback(error.message || "删除失败", true));
+        deleteVideo(activeCategory.id, video.id).then((result) => {
+          if (!result.ok) {
+            setFeedback(result.message, true);
+            return;
+          }
+          setFeedback("已删除视频");
+        });
       });
     });
     actions.appendChild(playButton);
@@ -385,51 +398,76 @@ function formatTime(value) {
 }
 
 function setFeedback(text, isError = false) {
-  if (!feedbackEl) return;
+  if (!feedbackEl) {
+    return;
+  }
+  if (feedbackTimer) {
+    clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+  }
   feedbackEl.textContent = text || "";
+  feedbackEl.classList.toggle("is-visible", Boolean(text));
   feedbackEl.classList.toggle("is-error", Boolean(text && isError));
   if (text) {
-    setTimeout(() => {
+    feedbackTimer = setTimeout(() => {
       feedbackEl.textContent = "";
+      feedbackEl.classList.remove("is-visible");
       feedbackEl.classList.remove("is-error");
+      feedbackTimer = null;
     }, 2500);
+  } else {
+    feedbackEl.classList.remove("is-visible");
   }
 }
 
 async function addCurrentVideoToList() {
   addCurrentBtn.disabled = true;
-  try {
-    const video = await queryActiveTabVideo();
-    const categoryId = state.activeCategoryId;
-    if (!categoryId) {
-      throw new Error("请先选择分类");
-    }
-    await chrome.runtime.sendMessage({
-      type: MESSAGE.PLAYLIST_ADD_VIDEO,
-      payload: { categoryId, video }
-    });
-    setFeedback("已添加当前视频");
-  } catch (error) {
-    setFeedback(error.message || "添加失败", true);
-  } finally {
+  const videoResult = await queryActiveTabVideo();
+  if (!videoResult.ok) {
+    setFeedback(videoResult.message, true);
     addCurrentBtn.disabled = false;
+    return;
   }
+  const categoryId = state.activeCategoryId;
+  if (!categoryId) {
+    setFeedback("请先选择分类", true);
+    addCurrentBtn.disabled = false;
+    return;
+  }
+  const result = await sendRuntimeCommand(
+    {
+      type: MESSAGE.PLAYLIST_ADD_VIDEO,
+      payload: { categoryId, video: videoResult.video }
+    },
+    "添加失败"
+  );
+  if (!result.ok) {
+    setFeedback(result.message, true);
+    addCurrentBtn.disabled = false;
+    return;
+  }
+  setFeedback("已添加当前视频");
+  addCurrentBtn.disabled = false;
 }
 
 async function queryActiveTabVideo() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
-  if (!tab) {
-    throw new Error("未找到活动标签页");
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+    if (!tab) {
+      return { ok: false, message: "未找到活动标签页" };
+    }
+    if (!tab.url || !tab.url.includes("bilibili.com/video/")) {
+      return { ok: false, message: "当前页不是 B 站视频页" };
+    }
+    const response = await chrome.tabs.sendMessage(tab.id, { type: MESSAGE.CONTENT_REQUEST_VIDEO_INFO });
+    if (!response?.ok) {
+      return { ok: false, message: response?.message || "无法获取视频信息" };
+    }
+    return { ok: true, video: response.video };
+  } catch (error) {
+    return { ok: false, message: error?.message || "无法获取视频信息" };
   }
-  if (!tab.url || !tab.url.includes("bilibili.com/video/")) {
-    throw new Error("当前页不是 B 站视频页");
-  }
-  const response = await chrome.tabs.sendMessage(tab.id, { type: MESSAGE.CONTENT_REQUEST_VIDEO_INFO });
-  if (!response?.ok) {
-    throw new Error(response?.message || "无法获取视频信息");
-  }
-  return response.video;
 }
 
 function setTooltip(element, label) {
@@ -480,13 +518,14 @@ function submitNewCategory() {
     setFeedback("请输入分类名", true);
     return;
   }
-  chrome.runtime
-    .sendMessage({ type: MESSAGE.PLAYLIST_CREATE_CATEGORY, payload: { name } })
-    .then(() => {
-      setFeedback("已创建分类");
-      closeCategoryPopover();
-    })
-    .catch((error) => setFeedback(error.message || "创建失败", true));
+  sendRuntimeCommand({ type: MESSAGE.PLAYLIST_CREATE_CATEGORY, payload: { name } }, "创建失败").then((result) => {
+    if (!result.ok) {
+      setFeedback(result.message, true);
+      return;
+    }
+    setFeedback("已创建分类");
+    closeCategoryPopover();
+  });
 }
 
 function openConfirmDialog(message, action) {
@@ -532,25 +571,60 @@ async function performBulkDelete(categoryId, videoIds) {
     setFeedback("请选择需要删除的视频", true);
     return;
   }
-  try {
-    for (const videoId of videoIds) {
-      // eslint-disable-next-line no-await-in-loop
-      await deleteVideo(categoryId, videoId);
+  for (const videoId of videoIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await deleteVideo(categoryId, videoId);
+    if (!result.ok) {
+      setFeedback(result.message, true);
+      bulkSelection.ids.clear();
+      updateBulkUI();
+      return;
     }
-    setFeedback("已删除选中视频");
-  } catch (error) {
-    setFeedback(error.message || "删除失败", true);
-  } finally {
-    bulkSelection.ids.clear();
-    updateBulkUI();
   }
+  setFeedback("已删除选中视频");
+  bulkSelection.ids.clear();
+  updateBulkUI();
 }
 
 function deleteVideo(categoryId, videoId) {
-  return chrome.runtime.sendMessage({
-    type: MESSAGE.PLAYLIST_DELETE_VIDEO,
-    payload: { categoryId, videoId }
-  });
+  return sendRuntimeCommand(
+    {
+      type: MESSAGE.PLAYLIST_DELETE_VIDEO,
+      payload: { categoryId, videoId }
+    },
+    "删除失败"
+  );
+}
+
+async function initializePopup() {
+  try {
+    const snapshot = await chrome.runtime.sendMessage({ type: MESSAGE.POPUP_INIT });
+    if (!snapshot) {
+      setFeedback("无法初始化", true);
+      return;
+    }
+    refreshState(snapshot);
+  } catch (error) {
+    setFeedback(error?.message || "无法初始化", true);
+  }
+}
+
+async function sendRuntimeCommand(message, fallbackMessage) {
+  try {
+    const result = await chrome.runtime.sendMessage(message);
+    if (result?.ok === false) {
+      return { ok: false, message: result.message || fallbackMessage };
+    }
+    return { ok: true, ...(result || {}) };
+  } catch (error) {
+    return { ok: false, message: error?.message || fallbackMessage };
+  }
+}
+
+function handleResultMessage(result) {
+  if (!result?.ok) {
+    setFeedback(result?.message || "操作失败", true);
+  }
 }
 
 

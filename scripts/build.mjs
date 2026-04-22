@@ -60,6 +60,6 @@ async function build() {
     await build();
   }
 })().catch((error) => {
-  console.error(error);
+  void error;
   process.exit(1);
 });

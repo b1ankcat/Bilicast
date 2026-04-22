@@ -6,6 +6,18 @@ player.autoplay = true;
 const UPDATE_INTERVAL = 800;
 const LOAD_TIMEOUT = 12000;
 let lastUpdate = 0;
+let suppressPlayerErrorFeedback = false;
+
+function fail(message, payload = {}) {
+  return { ok: false, message, ...payload };
+}
+
+function messageFromError(error, fallback) {
+  if (typeof error === "string") {
+    return error;
+  }
+  return error?.message || fallback;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target !== "offscreen") {
@@ -13,10 +25,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.type === MESSAGE.OFFSCREEN_LOAD) {
     loadSource(message.payload)
-      .then(() => sendResponse({ ok: true }))
+      .then((result) => sendResponse(result))
       .catch((error) => {
-        console.error("Failed to load source", error);
-        sendResponse({ ok: false, message: error.message });
+        sendResponse(fail(messageFromError(error, "无法加载音频")));
       });
     return true;
   }
@@ -24,33 +35,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     applyControl(message.payload || {})
       .then((result) => sendResponse?.(result || { ok: true }))
       .catch((error) => {
-        console.warn("Failed to apply control", error);
         sendResponse?.({ ok: false, message: error?.message || "播放控制失败" });
       });
     return true;
   }
 });
 
-chrome.runtime.sendMessage({ type: MESSAGE.OFFSCREEN_READY }).catch((error) => {
-  console.error("Failed to notify readiness", error);
-});
+chrome.runtime.sendMessage({ type: MESSAGE.OFFSCREEN_READY }).catch(() => {});
 
 async function loadSource(payload = {}) {
   const candidates = collectCandidateUrls(payload);
   if (!candidates.length) {
-    throw new Error("缺少播放地址");
+    return fail("缺少播放地址");
   }
+  suppressPlayerErrorFeedback = true;
   let lastError = null;
   for (const url of candidates) {
     try {
       await attemptLoad(url, payload.startAt || 0);
-      return;
+      suppressPlayerErrorFeedback = false;
+      return { ok: true };
     } catch (error) {
       lastError = error;
-      console.warn("Failed to load candidate", url, formatMediaError(error));
     }
   }
-  throw lastError || new Error("无法加载音频");
+  suppressPlayerErrorFeedback = false;
+  return fail(messageFromError(lastError, "无法加载音频"));
 }
 
 function collectCandidateUrls(payload) {
@@ -111,11 +121,11 @@ function attemptLoad(url, startAt = 0) {
       if (settled) return;
       settled = true;
       cleanup();
-      const detail = error instanceof Error ? error : new Error("音频加载失败");
+      const detail = typeof error === "string" ? error : error?.message || "音频加载失败";
       reject(detail);
     };
     const onError = () => {
-      fail(player.error || new Error("音频加载失败"));
+      fail(formatMediaError(player.error) || "音频加载失败");
     };
     const onLoadedMeta = () => {
       try {
@@ -126,7 +136,7 @@ function attemptLoad(url, startAt = 0) {
         // ignore
       }
     };
-    const timer = setTimeout(() => fail(new Error("音频加载超时")), LOAD_TIMEOUT);
+    const timer = setTimeout(() => fail("音频加载超时"), LOAD_TIMEOUT);
 
     player.pause();
     player.removeAttribute("src");
@@ -197,11 +207,12 @@ player.addEventListener("playing", () => emitState(true));
 player.addEventListener("pause", () => emitState(true));
 player.addEventListener("ended", () => {
   emitState(true);
-  chrome.runtime.sendMessage({ type: MESSAGE.OFFSCREEN_ENDED }).catch((error) =>
-    console.error("Failed to notify ended", error)
-  );
+  chrome.runtime.sendMessage({ type: MESSAGE.OFFSCREEN_ENDED }).catch(() => {});
 });
 player.addEventListener("error", () => {
+  if (suppressPlayerErrorFeedback) {
+    return;
+  }
   const error = player.error;
   chrome.runtime.sendMessage({
     type: MESSAGE.OFFSCREEN_STATE,

@@ -47,8 +47,7 @@ export function normalizeVideoUrl(rawUrl) {
     const url = new URL(rawUrl);
     url.searchParams.set("t", "0");
     return url.toString();
-  } catch (error) {
-    console.warn("Failed to normalize url", rawUrl, error);
+  } catch {
     return rawUrl;
   }
 }

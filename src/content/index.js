@@ -4,9 +4,7 @@
       import(chrome.runtime.getURL("src/shared/messages.js"))
     ]);
     initContentScript(messageModule.MESSAGE);
-  } catch (error) {
-    console.error("Bilicast 内容脚本初始化失败", error);
-  }
+  } catch {}
 })();
 
 function initContentScript(MESSAGE) {
@@ -327,9 +325,7 @@ function initContentScript(MESSAGE) {
       if (queryBvid && /^BV/i.test(queryBvid)) {
         return queryBvid;
       }
-    } catch (error) {
-      console.warn("Failed to parse URL for bvid", error);
-    }
+    } catch {}
     const dataBvid = document.querySelector("[data-bvid]")?.getAttribute("data-bvid");
     if (dataBvid && /^BV/i.test(dataBvid)) {
       return dataBvid;

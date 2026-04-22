@@ -15,6 +15,7 @@
   PLAYLIST_DELETE_VIDEO: "playlist:deleteVideo",
 
   STORAGE_PUSH: "storage:push",
+  POPUP_FEEDBACK: "popup:feedback",
 
   OFFSCREEN_READY: "offscreen:ready",
   OFFSCREEN_LOAD: "offscreen:load",
