@@ -7,6 +7,8 @@ const UPDATE_INTERVAL = 800;
 const LOAD_TIMEOUT = 12000;
 let lastUpdate = 0;
 let suppressPlayerErrorFeedback = false;
+let recoveringFromError = false;
+let sourceState = createEmptySourceState();
 
 function fail(message, payload = {}) {
   return { ok: false, message, ...payload };
@@ -48,19 +50,22 @@ async function loadSource(payload = {}) {
   if (!candidates.length) {
     return fail("缺少播放地址");
   }
+  sourceState = {
+    videoId: payload.videoId || null,
+    urls: candidates,
+    activeIndex: -1
+  };
   suppressPlayerErrorFeedback = true;
-  let lastError = null;
-  for (const url of candidates) {
-    try {
-      await attemptLoad(url, payload.startAt || 0);
-      suppressPlayerErrorFeedback = false;
-      return { ok: true };
-    } catch (error) {
-      lastError = error;
-    }
+  try {
+    const result = await tryLoadCandidates(candidates, payload.startAt || 0);
+    sourceState.activeIndex = result.index;
+    suppressPlayerErrorFeedback = false;
+    return { ok: true };
+  } catch (error) {
+    suppressPlayerErrorFeedback = false;
+    sourceState = createEmptySourceState();
+    return fail(messageFromError(error, "无法加载音频"));
   }
-  suppressPlayerErrorFeedback = false;
-  return fail(messageFromError(lastError, "无法加载音频"));
 }
 
 function collectCandidateUrls(payload) {
@@ -98,6 +103,21 @@ function formatMediaError(error) {
     return `MediaError(code=${player.error.code || "unknown"})`;
   }
   return String(error);
+}
+
+async function tryLoadCandidates(candidates, startAt = 0, originalIndexes = []) {
+  let lastError = null;
+  for (let index = 0; index < candidates.length; index += 1) {
+    try {
+      await attemptLoad(candidates[index], startAt);
+      return {
+        index: typeof originalIndexes[index] === "number" ? originalIndexes[index] : index
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return Promise.reject(lastError || "音频加载失败");
 }
 
 function attemptLoad(url, startAt = 0) {
@@ -191,6 +211,7 @@ async function applyControl(control) {
       player.pause();
       player.removeAttribute("src");
       player.load();
+      sourceState = createEmptySourceState();
       return { ok: true };
     case "volume":
       if (typeof control.value === "number") {
@@ -200,6 +221,14 @@ async function applyControl(control) {
     default:
       return { ok: true };
   }
+}
+
+function createEmptySourceState() {
+  return {
+    videoId: null,
+    urls: [],
+    activeIndex: -1
+  };
 }
 
 player.addEventListener("timeupdate", () => emitState());
@@ -213,12 +242,42 @@ player.addEventListener("error", () => {
   if (suppressPlayerErrorFeedback) {
     return;
   }
-  const error = player.error;
-  chrome.runtime.sendMessage({
-    type: MESSAGE.OFFSCREEN_STATE,
-    payload: { error: error?.message || "播放失败", paused: true }
-  });
+  recoverFromPlaybackError(formatMediaError(player.error) || "播放失败").catch(() => {});
 });
+
+async function recoverFromPlaybackError(errorMessage) {
+  if (recoveringFromError) {
+    return;
+  }
+  recoveringFromError = true;
+  try {
+    const resumeAt = Math.max(0, Number(player.currentTime) || 0);
+    const fallbackIndexes = sourceState.urls
+      .map((_, index) => index)
+      .filter((index) => index !== sourceState.activeIndex);
+    const fallbackUrls = fallbackIndexes.map((index) => sourceState.urls[index]);
+    if (fallbackUrls.length) {
+      try {
+        const result = await tryLoadCandidates(fallbackUrls, resumeAt, fallbackIndexes);
+        sourceState.activeIndex = result.index;
+        emitState(true);
+        return;
+      } catch {
+        // continue to background recovery
+      }
+    }
+    await chrome.runtime.sendMessage({
+      type: MESSAGE.OFFSCREEN_SOURCE_FAILED,
+      payload: {
+        videoId: sourceState.videoId,
+        currentTime: resumeAt,
+        error: errorMessage
+      }
+    });
+  } finally {
+    recoveringFromError = false;
+  }
+}
 
 function emitState(force = false) {
   const now = Date.now();

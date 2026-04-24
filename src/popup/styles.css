@@ -123,14 +123,16 @@ textarea {
 }
 
 .row-progress {
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 23px;
 }
 
 .progress-main {
-  flex: 1;
-  max-width: calc(100% - 70px);
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -140,7 +142,7 @@ textarea {
   width: 100%;
   -webkit-appearance: none;
   background: var(--divider);
-  height: 3px;
+  height: 6px;
   border-radius: 999px;
 }
 
@@ -181,8 +183,16 @@ textarea {
   text-align: center;
 }
 
+.playback-inline-tools {
+  width: 156px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .volume-block {
-  width: 150px;
+  width: 84px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -190,7 +200,7 @@ textarea {
 }
 
 #volumeSlider {
-  width: 120px;
+  width: 76px;
   height: 6px;
   -webkit-appearance: none;
   appearance: none;
@@ -309,6 +319,33 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.playback-settings__field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+
+.playback-settings__field--inline {
+  gap: 6px;
+}
+
+.playback-settings__field--inline span {
+  font-size: 11px;
+}
+
+.playback-settings__field select {
+  width: 64px;
+  min-width: 64px;
+  border-radius: 10px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  font-size: 11px;
+  color: inherit;
 }
 
 .category-toolbar select {

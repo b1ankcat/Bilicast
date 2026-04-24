@@ -18,11 +18,17 @@
               <span id="durationTime">00:00</span>
             </div>
           </div>
-          <div class="volume-block" aria-label="音量控制">
-            <input type="range" id="volumeSlider" min="0" max="100" value="100" />
-            <div class="volume-labels">
-              <span>音量条</span>
+          <div class="playback-inline-tools">
+            <div class="volume-block" aria-label="音量控制">
+              <input type="range" id="volumeSlider" min="0" max="100" value="100" />
+              <div class="volume-labels">
+                <span>音量条</span>
+              </div>
             </div>
+            <label class="playback-settings__field playback-settings__field--inline" for="audioQualitySelect">
+              <span>音质</span>
+              <select id="audioQualitySelect"></select>
+            </label>
           </div>
         </div>
         <div class="controls-toolbar">

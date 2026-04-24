@@ -28,6 +28,10 @@ let offscreenReady = false;
 let offscreenCreation = null;
 let offscreenReadyWaiters = [];
 const OFFSCREEN_READY_TIMEOUT = 5000;
+let lastRecoveryAttempt = {
+  videoId: null,
+  at: 0
+};
 
 function ok(payload = {}) {
   return { ok: true, ...payload };
@@ -84,14 +88,9 @@ const messageRouter = {
   [MESSAGE.POPUP_CONTROL]: async ({ payload }) => controlPlaybackFlow(payload?.action, payload?.manual),
   [MESSAGE.POPUP_SEEK]: async ({ payload }) => seekFlow(payload?.seconds),
   [MESSAGE.POPUP_SET_MODE]: async ({ payload }) => setModeFlow(payload?.mode),
-  [MESSAGE.POPUP_SET_VOLUME]: async ({ payload }) => setVolumeFlow(payload?.volume)
+  [MESSAGE.POPUP_SET_VOLUME]: async ({ payload }) => setVolumeFlow(payload?.volume),
+  [MESSAGE.POPUP_SET_AUDIO_QUALITY]: async ({ payload }) => setAudioQualityFlow(payload?.audioQuality)
 };
-
-if (chrome.declarativeNetRequest?.onRuleMatchedDebug) {
-  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((info) => {
-    console.debug("DNR matched", info.rule.ruleId, info.request.url);
-  });
-}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message?.type) {
@@ -114,6 +113,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleOffscreenEnded();
     sendResponse?.({ ok: true });
     return;
+  }
+
+  if (message.type === MESSAGE.OFFSCREEN_SOURCE_FAILED) {
+    handleOffscreenSourceFailed(message.payload)
+      .then(() => sendResponse?.({ ok: true }))
+      .catch((error) => {
+        sendResponse?.(fail(messageFromError(error, "音频恢复失败")));
+      });
+    return true;
   }
 
   const handler = messageRouter[message.type];
@@ -450,12 +458,11 @@ async function exportPlaylistFlow() {
 }
 
 async function importPlaylistFlow(rawData) {
-  let parsed;
-  try {
-    parsed = parsePortablePlaylist(rawData);
-  } catch (error) {
-    return fail(messageFromError(error, "导入失败"));
+  const parsedResult = parsePortablePlaylist(rawData);
+  if (!parsedResult?.ok) {
+    return fail(parsedResult?.message || "导入失败");
   }
+  const parsed = parsedResult.data;
 
   const currentState = await ensureState();
   const nextState = createDefaultState();
@@ -517,7 +524,8 @@ async function ensureAudioStream(categoryId, videoId, options = {}) {
   if (!video) {
     return fail("未找到视频");
   }
-  if (!forceRefresh && video.audioUrl && video.cid) {
+  const qualityPreference = options.qualityPreference || state.playback.audioQuality || "auto";
+  if (!forceRefresh && video.audioUrl && video.cid && video.audioQuality === qualityPreference) {
     return ok({ video });
   }
   const metaResult = video.cid && !forceRefresh
@@ -528,7 +536,7 @@ async function ensureAudioStream(categoryId, videoId, options = {}) {
   }
   const meta = metaResult.meta;
   const cid = meta.cid || video.cid;
-  const streamResult = await fetchAudioStream(video.bvid, cid);
+  const streamResult = await fetchAudioStream(video.bvid, cid, qualityPreference);
   if (isFailure(streamResult)) {
     return streamResult;
   }
@@ -546,6 +554,7 @@ async function ensureAudioStream(categoryId, videoId, options = {}) {
       audioUrls: Array.isArray(stream.audioUrls) && stream.audioUrls.length
         ? stream.audioUrls
         : targetCategory.videos[index].audioUrls || (stream.audioUrl ? [stream.audioUrl] : []),
+      audioQuality: qualityPreference,
       duration: duration || targetCategory.videos[index].duration,
       audioFetchedAt: Date.now()
     };
@@ -594,7 +603,7 @@ async function ensureVideoMeta(video) {
   return video;
 }
 
-async function fetchAudioStream(bvid, cid) {
+async function fetchAudioStream(bvid, cid, qualityPreference = "auto") {
   try {
     const endpoint = new URL("https://api.bilibili.com/x/player/playurl");
     endpoint.searchParams.set("bvid", bvid);
@@ -609,38 +618,41 @@ async function fetchAudioStream(bvid, cid) {
     }
     const data = json.data || {};
     const dash = data.dash || {};
-    const urls = [];
-    const seen = new Set();
-    const pushUrl = (value) => {
-      if (typeof value !== "string") {
-        return;
-      }
-      const trimmed = value.trim();
-      if (!trimmed || seen.has(trimmed)) {
-        return;
-      }
-      seen.add(trimmed);
-      urls.push(trimmed);
-    };
+    const tracks = [];
     const dashAudios = [
       ...(Array.isArray(dash.audio) ? dash.audio : []),
       ...(Array.isArray(dash.dolby?.audio) ? dash.dolby.audio : []),
       ...(Array.isArray(dash.flac?.audio) ? dash.flac.audio : [])
     ];
     for (const track of dashAudios) {
-      pushUrl(track?.baseUrl);
-      if (Array.isArray(track?.backupUrl)) {
-        track.backupUrl.forEach(pushUrl);
+      const urls = collectTrackUrls(track?.baseUrl, track?.backupUrl);
+      if (!urls.length) {
+        continue;
       }
+      tracks.push({
+        urls,
+        bandwidth: Number(track?.bandwidth) || Number(track?.bandWidth) || 0,
+        qualityId: Number(track?.id) || 0,
+        codec: String(track?.codecs || ""),
+        source: resolveTrackSource(track?.codecs)
+      });
     }
     if (Array.isArray(data.durl)) {
       for (const segment of data.durl) {
-        pushUrl(segment?.url);
-        if (Array.isArray(segment?.backup_url)) {
-          segment.backup_url.forEach(pushUrl);
+        const urls = collectTrackUrls(segment?.url, segment?.backup_url);
+        if (!urls.length) {
+          continue;
         }
+        tracks.push({
+          urls,
+          bandwidth: Number(segment?.size) || 0,
+          qualityId: 0,
+          codec: "",
+          source: "durl"
+        });
       }
     }
+    const urls = flattenSortedTrackUrls(tracks, qualityPreference);
     const audioUrl = urls[0];
     if (!audioUrl) {
       return fail("未找到音频流");
@@ -650,6 +662,113 @@ async function fetchAudioStream(bvid, cid) {
   } catch (error) {
     return fail(messageFromError(error, "获取播放地址失败"));
   }
+}
+
+function collectTrackUrls(primaryUrl, backupUrls) {
+  const urls = [];
+  const seen = new Set();
+  const append = (value) => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    urls.push(trimmed);
+  };
+  append(primaryUrl);
+  if (Array.isArray(backupUrls)) {
+    backupUrls.forEach(append);
+  }
+  return urls;
+}
+
+function flattenSortedTrackUrls(tracks, qualityPreference) {
+  if (!tracks.length) {
+    return [];
+  }
+  const sortedTracks = sortAudioTracks(tracks, qualityPreference);
+  const urls = [];
+  const seen = new Set();
+  sortedTracks.forEach((track) => {
+    track.urls.forEach((url) => {
+      if (seen.has(url)) {
+        return;
+      }
+      seen.add(url);
+      urls.push(url);
+    });
+  });
+  return urls;
+}
+
+function sortAudioTracks(tracks, qualityPreference) {
+  const withBandwidth = tracks.filter((track) => track.bandwidth > 0);
+  const sortedBandwidths = withBandwidth.map((track) => track.bandwidth).sort((left, right) => left - right);
+  const minBandwidth = sortedBandwidths[0] || 0;
+  const maxBandwidth = sortedBandwidths[sortedBandwidths.length - 1] || 0;
+  const medianBandwidth = sortedBandwidths.length
+    ? sortedBandwidths[Math.floor((sortedBandwidths.length - 1) / 2)]
+    : 0;
+  const targetBandwidth = qualityPreference === "low"
+    ? minBandwidth
+    : qualityPreference === "standard"
+      ? medianBandwidth
+      : maxBandwidth;
+  return [...tracks].sort((left, right) => {
+    const sourceScore = getTrackSourceScore(left.source, qualityPreference) - getTrackSourceScore(right.source, qualityPreference);
+    if (sourceScore !== 0) {
+      return sourceScore;
+    }
+    if (qualityPreference === "low") {
+      if (left.bandwidth !== right.bandwidth) {
+        return left.bandwidth - right.bandwidth;
+      }
+    } else if (qualityPreference === "standard") {
+      const leftDistance = Math.abs((left.bandwidth || targetBandwidth) - targetBandwidth);
+      const rightDistance = Math.abs((right.bandwidth || targetBandwidth) - targetBandwidth);
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+      if (left.bandwidth !== right.bandwidth) {
+        return right.bandwidth - left.bandwidth;
+      }
+    } else if (left.bandwidth !== right.bandwidth) {
+      return right.bandwidth - left.bandwidth;
+    }
+    if (left.qualityId !== right.qualityId) {
+      return right.qualityId - left.qualityId;
+    }
+    return 0;
+  });
+}
+
+function getTrackSourceScore(source, qualityPreference) {
+  if (qualityPreference === "low") {
+    if (source === "durl") return 0;
+    if (source === "dash") return 1;
+    if (source === "dolby") return 2;
+    if (source === "flac") return 3;
+    return 4;
+  }
+  if (source === "flac") return 0;
+  if (source === "dolby") return 1;
+  if (source === "dash") return 2;
+  if (source === "durl") return 3;
+  return 4;
+}
+
+function resolveTrackSource(codec) {
+  const normalized = String(codec || "").toLowerCase();
+  if (normalized.includes("flac")) {
+    return "flac";
+  }
+  if (normalized.includes("ec-3")) {
+    return "dolby";
+  }
+  return "dash";
 }
 
 async function selectCategoryFlow(categoryId) {
@@ -741,6 +860,24 @@ async function setVolumeFlow(volume) {
   });
   await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "volume", value } });
   return ok();
+}
+
+async function setAudioQualityFlow(audioQuality) {
+  const allowed = new Set(["auto", "high", "standard", "low"]);
+  if (!allowed.has(audioQuality)) {
+    return fail("音质设置无效");
+  }
+  await mutateState((draft) => {
+    draft.playback.audioQuality = audioQuality;
+  });
+  const state = await ensureState();
+  if (state.playback.status !== "playing" || !state.playback.categoryId || !state.playback.videoId) {
+    return ok();
+  }
+  return playVideoByIdInternal(state.playback.categoryId, state.playback.videoId, state.playback.progress || 0, {
+    forceRefresh: true,
+    allowStreamRefreshRetry: true
+  });
 }
 
 async function playVideoById(categoryId, videoId, startAt = 0) {
@@ -968,6 +1105,35 @@ function handleOffscreenEnded() {
       }
     })
     .catch(() => {});
+}
+
+async function handleOffscreenSourceFailed(payload = {}) {
+  const state = await ensureState();
+  const categoryId = state.playback.categoryId;
+  const videoId = state.playback.videoId;
+  if (!categoryId || !videoId) {
+    if (payload?.error) {
+      pushPopupFeedback(payload.error, true);
+    }
+    return;
+  }
+  const now = Date.now();
+  if (lastRecoveryAttempt.videoId === videoId && now - lastRecoveryAttempt.at < 30000) {
+    pushPopupFeedback(payload?.error || "音频恢复失败", true);
+    return;
+  }
+  lastRecoveryAttempt = { videoId, at: now };
+  const resumeAt = Math.max(0, Number(payload?.currentTime) || state.playback.progress || 0);
+  const result = await playVideoByIdInternal(categoryId, videoId, resumeAt, {
+    forceRefresh: true,
+    allowStreamRefreshRetry: false
+  });
+  if (isFailure(result)) {
+    await updatePlaybackRuntime({ status: "paused" });
+    pushPopupFeedback(result.message || payload?.error || "音频恢复失败", true);
+    return;
+  }
+  pushPopupFeedback("音频已自动恢复", false);
 }
 
 async function ensureOffscreenDocument(options = {}) {

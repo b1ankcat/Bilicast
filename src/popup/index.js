@@ -1,4 +1,4 @@
-﻿import { MESSAGE, PLAYBACK_MODES } from "../shared/messages.js";
+﻿import { AUDIO_QUALITY_OPTIONS, MESSAGE, PLAYBACK_MODES } from "../shared/messages.js";
 import { DEFAULT_CATEGORY_ID } from "../shared/playlist.js";
 
 const MODE_ICONS = {
@@ -14,6 +14,7 @@ const state = {
   activeCategoryId: null,
   playback: {
     mode: "list",
+    audioQuality: "auto",
     status: "paused",
     progress: 0,
     duration: 0,
@@ -34,6 +35,7 @@ const categorySelect = document.getElementById("categorySelect");
 const newCategoryInput = document.getElementById("newCategoryInput");
 const addCategoryBtn = document.getElementById("addCategoryBtn");
 const deleteCategoryBtn = document.getElementById("deleteCategoryBtn");
+const audioQualitySelect = document.getElementById("audioQualitySelect");
 const categoryPopover = document.getElementById("categoryCreatePopover");
 const confirmCategoryBtn = document.getElementById("confirmCategoryBtn");
 const cancelCategoryBtn = document.getElementById("cancelCategoryBtn");
@@ -71,6 +73,8 @@ setTooltip(addCurrentBtn, "添加当前页视频");
 setTooltip(deleteCategoryBtn, "删除分类");
 setTooltip(addCategoryBtn, "新建分类");
 setTooltip(playBtn, "播放");
+
+renderAudioQualityOptions();
 
 const port = chrome.runtime.connect({ name: "popup" });
 port.onMessage.addListener((message) => {
@@ -143,6 +147,14 @@ volumeSlider?.addEventListener("input", () => {
   sendRuntimeCommand({ type: MESSAGE.POPUP_SET_VOLUME, payload: { volume: value } }, "音量调整失败").then(
     handleResultMessage
   );
+});
+
+audioQualitySelect?.addEventListener("change", () => {
+  const audioQuality = audioQualitySelect.value;
+  sendRuntimeCommand(
+    { type: MESSAGE.POPUP_SET_AUDIO_QUALITY, payload: { audioQuality } },
+    "音质切换失败"
+  ).then(handleResultMessage);
 });
 
 bulkToggle?.addEventListener("change", () => {
@@ -320,6 +332,9 @@ function renderPlayback() {
   const volume = typeof state.playback.volume === "number" ? state.playback.volume : 1;
   if (volumeSlider) {
     volumeSlider.value = Math.round(Math.min(1, Math.max(0, volume)) * 100);
+  }
+  if (audioQualitySelect) {
+    audioQualitySelect.value = state.playback.audioQuality || "auto";
   }
 }
 
@@ -607,6 +622,19 @@ function formatTime(value) {
     return `${hours}:${mins}:${String(seconds).padStart(2, "0")}`;
   }
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function renderAudioQualityOptions() {
+  if (!audioQualitySelect) {
+    return;
+  }
+  audioQualitySelect.innerHTML = "";
+  AUDIO_QUALITY_OPTIONS.forEach((option) => {
+    const element = document.createElement("option");
+    element.value = option.id;
+    element.textContent = option.label;
+    audioQualitySelect.appendChild(element);
+  });
 }
 
 function setFeedback(text, isError = false) {

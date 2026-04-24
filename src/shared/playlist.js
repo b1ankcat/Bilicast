@@ -35,6 +35,7 @@ export function createDefaultState() {
       categoryId: null,
       videoId: null,
       mode: "list",
+      audioQuality: "auto",
       status: "paused",
       progress: 0,
       duration: 0,
@@ -110,16 +111,16 @@ export function exportPortablePlaylist(state) {
 
 export function parsePortablePlaylist(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("导入文件格式无效");
+    return { ok: false, message: "导入文件格式无效" };
   }
   if (raw.schema !== PORTABLE_PLAYLIST_SCHEMA) {
-    throw new Error("不支持的播放列表格式");
+    return { ok: false, message: "不支持的播放列表格式" };
   }
   if (raw.version !== PORTABLE_PLAYLIST_VERSION) {
-    throw new Error("不支持的播放列表版本");
+    return { ok: false, message: "不支持的播放列表版本" };
   }
   if (!Array.isArray(raw.categories) || raw.categories.length === 0) {
-    throw new Error("播放列表至少包含一个分类");
+    return { ok: false, message: "播放列表至少包含一个分类" };
   }
   const categories = raw.categories.map((category, categoryIndex) => {
     const name = String(category?.name || "").trim() || `${DEFAULT_CATEGORY_NAME} ${categoryIndex + 1}`;
@@ -129,7 +130,7 @@ export function parsePortablePlaylist(raw) {
     for (const video of inputVideos) {
       const bvid = String(video?.bvid || "").trim();
       if (!/^BV[\w]+$/i.test(bvid)) {
-        throw new Error(`分类「${name}」存在无效 BV 号`);
+        return { ok: false, message: `分类「${name}」存在无效 BV 号` };
       }
       const page = Math.max(1, Number(video?.page) || 1);
       const id = makeVideoId({ bvid, page });
@@ -140,17 +141,24 @@ export function parsePortablePlaylist(raw) {
       const title = String(video?.title || "").trim() || buildVideoTitleFallback(bvid, page);
       videos.push({ bvid, page, title });
     }
-    return { name, videos };
+    return { ok: true, category: { name, videos } };
   });
+  const invalidCategory = categories.find((entry) => entry?.ok === false);
+  if (invalidCategory) {
+    return invalidCategory;
+  }
   const rawIndex = Number(raw.activeCategoryIndex);
   const activeCategoryIndex = Number.isInteger(rawIndex)
     ? Math.min(Math.max(rawIndex, 0), categories.length - 1)
     : 0;
   return {
-    schema: PORTABLE_PLAYLIST_SCHEMA,
-    version: PORTABLE_PLAYLIST_VERSION,
-    activeCategoryIndex,
-    categories
+    ok: true,
+    data: {
+      schema: PORTABLE_PLAYLIST_SCHEMA,
+      version: PORTABLE_PLAYLIST_VERSION,
+      activeCategoryIndex,
+      categories: categories.map((entry) => entry.category)
+    }
   };
 }
 

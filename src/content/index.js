@@ -365,6 +365,7 @@ function initContentScript(MESSAGE) {
     this.select = this.root.querySelector("select");
     this.newInput = this.root.querySelector(".bilicast-popover__input");
     this.message = this.root.querySelector(".bilicast-popover__message");
+    this.categories = [];
     this.messageTimer = null;
     this.root.addEventListener("click", (event) => event.stopPropagation());
     document.addEventListener("click", (event) => {
@@ -397,7 +398,8 @@ function initContentScript(MESSAGE) {
   PlaylistPopover.prototype.open = async function (anchor, video) {
     this.video = video;
     await this.refreshCategories();
-    if (!this.categories.length) {
+    const categories = Array.isArray(this.categories) ? this.categories : [];
+    if (!categories.length) {
       this.setMessage("请先新建分类", true);
     } else {
       this.setMessage("", false);
@@ -436,6 +438,7 @@ function initContentScript(MESSAGE) {
         this.select.appendChild(option);
       });
     } catch (error) {
+      this.categories = [];
       this.setMessage(error.message || "加载分类失败", true);
     }
   };
