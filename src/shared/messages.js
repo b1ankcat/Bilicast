@@ -10,11 +10,15 @@
   POPUP_ADD_ACTIVE_VIDEO: "popup:addActiveVideo",
 
   PLAYLIST_GET_CATEGORIES: "playlist:getCategories",
+  PLAYLIST_GET_VIDEO_MEMBERSHIPS: "playlist:getVideoMemberships",
   PLAYLIST_ADD_VIDEO: "playlist:addVideo",
   PLAYLIST_CREATE_CATEGORY: "playlist:createCategory",
+  PLAYLIST_RENAME_CATEGORY: "playlist:renameCategory",
   PLAYLIST_DELETE_CATEGORY: "playlist:deleteCategory",
   PLAYLIST_DELETE_VIDEO: "playlist:deleteVideo",
   PLAYLIST_REORDER_VIDEOS: "playlist:reorderVideos",
+  PLAYLIST_REORDER_CATEGORIES: "playlist:reorderCategories",
+  PLAYLIST_MOVE_VIDEO: "playlist:moveVideo",
   PLAYLIST_EXPORT: "playlist:export",
   PLAYLIST_IMPORT: "playlist:import",
 

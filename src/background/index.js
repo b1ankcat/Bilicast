@@ -6,6 +6,7 @@ import {
   createVideoEntry,
   DEFAULT_CATEGORY_ID,
   exportPortablePlaylist,
+  makeVideoId,
   parsePortablePlaylist
 } from "../shared/playlist.js";
 
@@ -76,11 +77,15 @@ chrome.runtime.onConnect.addListener((port) => {
 const messageRouter = {
   [MESSAGE.POPUP_INIT]: async () => formatSnapshot(await ensureState()),
   [MESSAGE.PLAYLIST_GET_CATEGORIES]: async () => listCategorySummary(),
+  [MESSAGE.PLAYLIST_GET_VIDEO_MEMBERSHIPS]: async ({ payload }) => getVideoMembershipsFlow(payload),
   [MESSAGE.PLAYLIST_CREATE_CATEGORY]: async ({ payload }) => createCategoryFlow(payload?.name),
+  [MESSAGE.PLAYLIST_RENAME_CATEGORY]: async ({ payload }) => renameCategoryFlow(payload?.categoryId, payload?.name),
   [MESSAGE.PLAYLIST_DELETE_CATEGORY]: async ({ payload }) => deleteCategoryFlow(payload?.categoryId),
   [MESSAGE.PLAYLIST_ADD_VIDEO]: async ({ payload }) => addVideoFlow(payload),
   [MESSAGE.PLAYLIST_DELETE_VIDEO]: async ({ payload }) => deleteVideoFlow(payload),
   [MESSAGE.PLAYLIST_REORDER_VIDEOS]: async ({ payload }) => reorderVideosFlow(payload),
+  [MESSAGE.PLAYLIST_REORDER_CATEGORIES]: async ({ payload }) => reorderCategoriesFlow(payload?.categoryOrder),
+  [MESSAGE.PLAYLIST_MOVE_VIDEO]: async ({ payload }) => moveVideoFlow(payload),
   [MESSAGE.PLAYLIST_EXPORT]: async () => exportPlaylistFlow(),
   [MESSAGE.PLAYLIST_IMPORT]: async ({ payload }) => importPlaylistFlow(payload?.data),
   [MESSAGE.POPUP_SELECT_CATEGORY]: async ({ payload }) => selectCategoryFlow(payload?.categoryId),
@@ -329,6 +334,37 @@ async function listCategorySummary() {
   return ok({ categories, activeCategoryId: state.activeCategoryId });
 }
 
+function resolveRequestedVideoId(payload = {}) {
+  const directVideoId = typeof payload?.videoId === "string" ? payload.videoId.trim() : "";
+  if (directVideoId) {
+    return directVideoId;
+  }
+  const bvid = typeof payload?.bvid === "string" ? payload.bvid.trim() : "";
+  if (!bvid) {
+    return null;
+  }
+  return makeVideoId({
+    bvid,
+    page: payload?.pageIndex ?? payload?.page ?? 1
+  });
+}
+
+async function getVideoMembershipsFlow(payload) {
+  const videoId = resolveRequestedVideoId(payload);
+  if (!videoId) {
+    return fail("缺少视频标识");
+  }
+  const state = await ensureState();
+  const categories = state.categoryOrder
+    .map((id) => state.categories[id])
+    .filter((category) => category?.videos?.some((video) => video.id === videoId))
+    .map((category) => ({
+      id: category.id,
+      name: category.name
+    }));
+  return ok({ categories });
+}
+
 async function createCategoryFlow(name) {
   const trimmed = (name || "").trim();
   const newCategory = createCategory(trimmed);
@@ -338,6 +374,32 @@ async function createCategoryFlow(name) {
     draft.activeCategoryId = newCategory.id;
   });
   return ok({ category: newCategory });
+}
+
+async function renameCategoryFlow(categoryId, name) {
+  if (!categoryId) {
+    return fail("缺少分类标识");
+  }
+  if (categoryId === DEFAULT_CATEGORY_ID) {
+    return fail("默认分类无法重命名");
+  }
+  const trimmed = String(name || "").trim();
+  if (!trimmed) {
+    return fail("分类名称不能为空");
+  }
+  const draft = deepClone(await ensureState());
+  const category = draft.categories[categoryId];
+  if (!category) {
+    return fail("分类不存在");
+  }
+  category.name = trimmed;
+  await setState(draft);
+  return ok({
+    category: {
+      id: category.id,
+      name: category.name
+    }
+  });
 }
 
 async function deleteCategoryFlow(categoryId) {
@@ -452,6 +514,34 @@ async function reorderVideosFlow(payload) {
   return ok();
 }
 
+async function reorderCategoriesFlow(categoryOrder) {
+  if (!Array.isArray(categoryOrder) || !categoryOrder.length) {
+    return fail("排序数据无效");
+  }
+  const draft = deepClone(await ensureState());
+  const currentIds = draft.categoryOrder.filter((id) => draft.categories[id]);
+  if (categoryOrder.length !== currentIds.length) {
+    return fail("排序数据不完整");
+  }
+  const uniqueIds = new Set(categoryOrder);
+  if (uniqueIds.size !== categoryOrder.length) {
+    return fail("排序数据重复");
+  }
+  if (categoryOrder.some((id) => !draft.categories[id])) {
+    return fail("排序目标不存在");
+  }
+  if (currentIds.some((id) => !uniqueIds.has(id))) {
+    return fail("排序数据不完整");
+  }
+  const normalizedOrder = [...categoryOrder];
+  draft.categoryOrder = normalizedOrder;
+  if (!draft.categories[draft.activeCategoryId]) {
+    draft.activeCategoryId = normalizedOrder[0] || DEFAULT_CATEGORY_ID;
+  }
+  await setState(draft);
+  return ok({ categoryOrder: normalizedOrder });
+}
+
 async function exportPlaylistFlow() {
   const state = await ensureState();
   return ok({ data: exportPortablePlaylist(state) });
@@ -511,6 +601,35 @@ async function importPlaylistFlow(rawData) {
     categoryCount: parsed.categories.length,
     videoCount
   });
+}
+
+async function moveVideoFlow(payload) {
+  const fromCategoryId = payload?.fromCategoryId;
+  const toCategoryId = payload?.toCategoryId;
+  const videoId = resolveRequestedVideoId(payload);
+  if (!fromCategoryId || !toCategoryId || !videoId) {
+    return fail("移动参数无效");
+  }
+  if (fromCategoryId === toCategoryId) {
+    return fail("请选择其他分类");
+  }
+  const draft = deepClone(await ensureState());
+  const sourceCategory = draft.categories[fromCategoryId];
+  const targetCategory = draft.categories[toCategoryId];
+  if (!sourceCategory || !targetCategory) {
+    return fail("分类不存在");
+  }
+  const sourceIndex = sourceCategory.videos.findIndex((video) => video.id === videoId);
+  if (sourceIndex === -1) {
+    return fail("视频不存在");
+  }
+  const [movedVideo] = sourceCategory.videos.splice(sourceIndex, 1);
+  targetCategory.videos = [movedVideo, ...targetCategory.videos.filter((video) => video.id !== videoId)];
+  if (draft.playback.videoId === videoId) {
+    draft.playback.categoryId = toCategoryId;
+  }
+  await setState(draft);
+  return ok({ video: movedVideo });
 }
 
 async function ensureAudioStream(categoryId, videoId, options = {}) {

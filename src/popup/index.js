@@ -1,4 +1,4 @@
-﻿import { AUDIO_QUALITY_OPTIONS, MESSAGE, PLAYBACK_MODES } from "../shared/messages.js";
+import { AUDIO_QUALITY_OPTIONS, MESSAGE, PLAYBACK_MODES } from "../shared/messages.js";
 import { DEFAULT_CATEGORY_ID } from "../shared/playlist.js";
 
 const MODE_ICONS = {
@@ -32,13 +32,19 @@ const nextBtn = document.getElementById("nextBtn");
 const modeBtn = document.getElementById("modeBtn");
 const addCurrentBtn = document.getElementById("addCurrentBtn");
 const categorySelect = document.getElementById("categorySelect");
-const newCategoryInput = document.getElementById("newCategoryInput");
-const addCategoryBtn = document.getElementById("addCategoryBtn");
-const deleteCategoryBtn = document.getElementById("deleteCategoryBtn");
+const manageCategoriesBtn = document.getElementById("manageCategoriesBtn");
 const audioQualitySelect = document.getElementById("audioQualitySelect");
-const categoryPopover = document.getElementById("categoryCreatePopover");
-const confirmCategoryBtn = document.getElementById("confirmCategoryBtn");
-const cancelCategoryBtn = document.getElementById("cancelCategoryBtn");
+const categoryManagerDialog = document.getElementById("categoryManagerDialog");
+const categoryManagerList = document.getElementById("categoryManagerList");
+const managerCategoryInput = document.getElementById("managerCategoryInput");
+const managerCategoryConfirmBtn = document.getElementById("managerCategoryConfirmBtn");
+const closeCategoryManagerBtn = document.getElementById("closeCategoryManagerBtn");
+const moveVideoDialog = document.getElementById("moveVideoDialog");
+const moveVideoText = document.getElementById("moveVideoText");
+const moveVideoSelect = document.getElementById("moveVideoSelect");
+const moveVideoHint = document.getElementById("moveVideoHint");
+const confirmMoveVideoBtn = document.getElementById("confirmMoveVideoBtn");
+const cancelMoveVideoBtn = document.getElementById("cancelMoveVideoBtn");
 const deleteConfirmDialog = document.getElementById("deleteConfirmDialog");
 const deleteConfirmText = document.getElementById("deleteConfirmText");
 const confirmDeleteBtn = document.getElementById("confirmDeleteBtn");
@@ -55,11 +61,13 @@ const feedbackEl = document.getElementById("categoryFeedback");
 let seeking = false;
 let pendingConfirmAction = null;
 let feedbackTimer = null;
+
 const bulkSelection = {
   enabled: false,
   categoryId: null,
   ids: new Set()
 };
+
 const dragState = {
   videoId: null,
   overVideoId: null,
@@ -67,11 +75,31 @@ const dragState = {
   suppressClickUntil: 0
 };
 
+const categoryManagerState = {
+  dragCategoryId: null,
+  overCategoryId: null,
+  position: null
+};
+
+const moveVideoState = {
+  videoId: null,
+  fromCategoryId: null,
+  title: ""
+};
+
+const actionMenuState = {
+  videoId: null,
+  categoryId: null,
+  x: 0,
+  y: 0
+};
+
+const videoActionMenuEl = createVideoActionMenu();
+
 setTooltip(prevBtn, "上一条");
 setTooltip(nextBtn, "下一条");
 setTooltip(addCurrentBtn, "添加当前页视频");
-setTooltip(deleteCategoryBtn, "删除分类");
-setTooltip(addCategoryBtn, "新建分类");
+setTooltip(manageCategoriesBtn, "管理分类");
 setTooltip(playBtn, "播放");
 
 renderAudioQualityOptions();
@@ -89,12 +117,13 @@ port.onMessage.addListener((message) => {
 
 initializePopup();
 
-progressEl.addEventListener("input", () => {
+progressEl?.addEventListener("input", () => {
   seeking = true;
   updateProgressLabel(Number(progressEl.value), state.playback.duration || 0);
 });
+
 ["change", "mouseup", "touchend"].forEach((eventName) => {
-  progressEl.addEventListener(eventName, () => {
+  progressEl?.addEventListener(eventName, () => {
     if (!seeking) {
       return;
     }
@@ -110,26 +139,26 @@ progressEl.addEventListener("input", () => {
   });
 });
 
-playBtn.addEventListener("click", () => {
+playBtn?.addEventListener("click", () => {
   const action = state.playback.status === "playing" ? "pause" : "play";
   sendRuntimeCommand({ type: MESSAGE.POPUP_CONTROL, payload: { action } }, "播放失败").then(handleResultMessage);
 });
 
-prevBtn.addEventListener("click", () => {
+prevBtn?.addEventListener("click", () => {
   sendRuntimeCommand(
     { type: MESSAGE.POPUP_CONTROL, payload: { action: "previous", manual: true } },
     "没有上一条"
   ).then(handleResultMessage);
 });
 
-nextBtn.addEventListener("click", () => {
+nextBtn?.addEventListener("click", () => {
   sendRuntimeCommand(
     { type: MESSAGE.POPUP_CONTROL, payload: { action: "next", manual: true } },
     "没有下一条"
   ).then(handleResultMessage);
 });
 
-modeBtn.addEventListener("click", () => {
+modeBtn?.addEventListener("click", () => {
   const ids = PLAYBACK_MODES.map((mode) => mode.id);
   const currentIndex = ids.indexOf(state.playback.mode);
   const nextMode = ids[(currentIndex + 1) % ids.length];
@@ -138,7 +167,7 @@ modeBtn.addEventListener("click", () => {
   );
 });
 
-addCurrentBtn.addEventListener("click", () => {
+addCurrentBtn?.addEventListener("click", () => {
   addCurrentVideoToList();
 });
 
@@ -201,37 +230,51 @@ importFileInput?.addEventListener("change", () => {
   prepareImportPlaylist(file);
 });
 
-updateBulkUI();
-
-categorySelect.addEventListener("change", () => {
+categorySelect?.addEventListener("change", () => {
   const categoryId = categorySelect.value;
-  deleteCategoryBtn.disabled = !categoryId || categoryId === DEFAULT_CATEGORY_ID;
   if (!categoryId) {
     bulkSelection.enabled = false;
     bulkSelection.ids.clear();
     bulkSelection.categoryId = null;
     updateBulkUI();
-  } else {
-    bulkSelection.categoryId = categoryId;
-    bulkSelection.ids.clear();
-    updateBulkUI();
+    return;
   }
+  bulkSelection.categoryId = categoryId;
+  bulkSelection.ids.clear();
+  updateBulkUI();
   sendRuntimeCommand({ type: MESSAGE.POPUP_SELECT_CATEGORY, payload: { categoryId } }, "切换失败").then(
     handleResultMessage
   );
 });
 
-addCategoryBtn.addEventListener("click", () => {
-  toggleCategoryPopover();
+manageCategoriesBtn?.addEventListener("click", () => {
+  openCategoryManager();
 });
 
-confirmCategoryBtn?.addEventListener("click", () => submitNewCategory());
-cancelCategoryBtn?.addEventListener("click", () => closeCategoryPopover());
-categoryPopover?.addEventListener("click", (event) => {
-  if (event.target === categoryPopover) {
-    closeCategoryPopover(false);
+closeCategoryManagerBtn?.addEventListener("click", () => {
+  closeCategoryManager();
+});
+categoryManagerDialog?.addEventListener("click", (event) => {
+  if (event.target === categoryManagerDialog) {
+    closeCategoryManager();
   }
 });
+
+moveVideoSelect?.addEventListener("change", () => {
+  updateMoveVideoHint();
+});
+confirmMoveVideoBtn?.addEventListener("click", () => {
+  submitMoveVideo();
+});
+cancelMoveVideoBtn?.addEventListener("click", () => {
+  closeMoveVideoDialog();
+});
+moveVideoDialog?.addEventListener("click", (event) => {
+  if (event.target === moveVideoDialog) {
+    closeMoveVideoDialog();
+  }
+});
+
 deleteConfirmDialog?.addEventListener("click", (event) => {
   if (event.target === deleteConfirmDialog) {
     closeConfirmDialog();
@@ -247,61 +290,94 @@ cancelDeleteBtn?.addEventListener("click", () => {
   pendingConfirmAction = null;
   closeConfirmDialog(false);
 });
-newCategoryInput?.addEventListener("keydown", (event) => {
+
+managerCategoryConfirmBtn?.addEventListener("click", () => submitNewCategory());
+managerCategoryInput?.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     submitNewCategory();
   }
   if (event.key === "Escape") {
     event.preventDefault();
-    closeCategoryPopover();
+    managerCategoryInput.blur();
   }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    closeCategoryPopover(false);
+    closeCategoryManager();
+    closeMoveVideoDialog();
+    closeVideoActionMenu();
     closeConfirmDialog();
   }
 });
 
-deleteCategoryBtn.addEventListener("click", () => {
-  const categoryId = categorySelect.value;
-  if (!categoryId) {
-    setFeedback("请选择分类", true);
-    return;
-  }
-  if (categoryId === DEFAULT_CATEGORY_ID) {
-    setFeedback("默认分类无法删除", true);
-    return;
-  }
-  const category = state.categories.find((item) => item.id === categoryId);
-  const name = category?.name ? `「${category.name}」` : "该分类";
-  openConfirmDialog(`确认删除${name}吗？`, () => {
-    sendRuntimeCommand({ type: MESSAGE.PLAYLIST_DELETE_CATEGORY, payload: { categoryId } }, "删除失败").then((result) => {
-      if (!result.ok) {
-        setFeedback(result.message, true);
-        return;
-      }
-      setFeedback("已删除分类");
-    });
-  });
+document.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
+
+document.addEventListener("pointerdown", handleOutsideVideoActionMenuEvent, true);
+document.addEventListener("click", handleOutsideVideoActionMenuEvent, true);
+document.addEventListener("contextmenu", handleOutsideVideoActionMenuEvent, true);
+
+updateBulkUI();
+
+function handleOutsideVideoActionMenuEvent(event) {
+  if (!videoActionMenuEl || videoActionMenuEl.hidden) {
+    return;
+  }
+  if (isInsideVideoActionMenu(event.target) || isVideoActionButton(event.target)) {
+    return;
+  }
+  closeVideoActionMenu();
+}
+
+function isInsideVideoActionMenu(target) {
+  return target instanceof Node && videoActionMenuEl.contains(target);
+}
+
+function isVideoActionButton(target) {
+  return target instanceof Element && Boolean(target.closest(".video-card__action"));
+}
 
 function refreshState(snapshot) {
   if (!snapshot) {
     return;
   }
-  state.categories = snapshot.categories || [];
-  state.categoryOrder = snapshot.categoryOrder || [];
-  state.activeCategoryId = snapshot.activeCategoryId || state.activeCategoryId;
+  state.categories = Array.isArray(snapshot.categories) ? snapshot.categories : [];
+  state.categoryOrder = Array.isArray(snapshot.categoryOrder)
+    ? snapshot.categoryOrder
+    : state.categories.map((category) => category.id);
+  state.activeCategoryId = snapshot.activeCategoryId || state.categories[0]?.id || null;
   state.playback = { ...state.playback, ...(snapshot.playback || {}) };
+
+  if (!getCategoryById(state.activeCategoryId)) {
+    state.activeCategoryId = state.categories[0]?.id || null;
+  }
+
+  if (bulkSelection.enabled && bulkSelection.categoryId !== state.activeCategoryId) {
+    bulkSelection.categoryId = state.activeCategoryId;
+    bulkSelection.ids.clear();
+    updateBulkUI();
+  }
+
   renderCategories();
   renderPlayback();
   renderVideoList();
+  syncVideoActionMenuState();
+
+  if (isCategoryManagerOpen()) {
+    renderCategoryManager();
+  }
+  if (isMoveVideoDialogOpen()) {
+    renderMoveVideoDialog();
+  }
 }
 
 function renderCategories() {
+  if (!categorySelect) {
+    return;
+  }
   categorySelect.innerHTML = "";
   state.categories.forEach((category) => {
     const option = document.createElement("option");
@@ -312,23 +388,28 @@ function renderCategories() {
     }
     categorySelect.appendChild(option);
   });
-  deleteCategoryBtn.disabled = !categorySelect.value || categorySelect.value === DEFAULT_CATEGORY_ID;
 }
 
 function renderPlayback() {
   const duration = Number(state.playback.duration) || 0;
   const progress = Number(state.playback.progress) || 0;
-  progressEl.max = Math.max(1, Math.floor(duration));
-  if (!seeking) {
-    progressEl.value = Math.min(progressEl.max, Math.floor(progress));
-    updateProgressLabel(progress, duration);
+  if (progressEl) {
+    progressEl.max = Math.max(1, Math.floor(duration));
+    if (!seeking) {
+      progressEl.value = Math.min(progressEl.max, Math.floor(progress));
+      updateProgressLabel(progress, duration);
+    }
   }
   const isPlaying = state.playback.status === "playing";
-  playBtn.textContent = isPlaying ? "\u23F8" : "\u25B6";
-  setTooltip(playBtn, isPlaying ? "暂停" : "播放");
+  if (playBtn) {
+    playBtn.textContent = isPlaying ? "\u23F8" : "\u25B6";
+    setTooltip(playBtn, isPlaying ? "暂停" : "播放");
+  }
   const mode = PLAYBACK_MODES.find((item) => item.id === state.playback.mode) || PLAYBACK_MODES[1];
-  modeBtn.textContent = MODE_ICONS[mode.id] || "\uD83D\uDD01";
-  setTooltip(modeBtn, mode.label);
+  if (modeBtn) {
+    modeBtn.textContent = MODE_ICONS[mode.id] || "\uD83D\uDD01";
+    setTooltip(modeBtn, mode.label);
+  }
   const volume = typeof state.playback.volume === "number" ? state.playback.volume : 1;
   if (volumeSlider) {
     volumeSlider.value = Math.round(Math.min(1, Math.max(0, volume)) * 100);
@@ -339,8 +420,11 @@ function renderPlayback() {
 }
 
 function renderVideoList() {
+  if (!videoListEl) {
+    return;
+  }
   videoListEl.innerHTML = "";
-  const activeCategory = state.categories.find((category) => category.id === state.activeCategoryId);
+  const activeCategory = getActiveCategory();
   if (!activeCategory || !activeCategory.videos.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
@@ -348,11 +432,13 @@ function renderVideoList() {
     videoListEl.appendChild(empty);
     return;
   }
+
   if (bulkSelection.enabled && bulkSelection.categoryId !== activeCategory.id) {
     bulkSelection.categoryId = activeCategory.id;
     bulkSelection.ids.clear();
     updateBulkUI();
   }
+
   activeCategory.videos.forEach((video) => {
     const card = document.createElement("div");
     card.className = "video-card";
@@ -382,6 +468,7 @@ function renderVideoList() {
       selectCell.appendChild(selectBox);
       card.appendChild(selectCell);
     }
+
     const meta = document.createElement("div");
     meta.className = "video-card__meta";
     const title = document.createElement("div");
@@ -398,11 +485,15 @@ function renderVideoList() {
 
     const actions = document.createElement("div");
     actions.className = "video-card__actions";
-    const playButton = document.createElement("button");
-    playButton.type = "button";
-    playButton.textContent = "播放";
-    playButton.addEventListener("click", (event) => {
+
+    const actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.className = "video-card__action";
+    actionButton.textContent = "▶";
+    actionButton.title = "左键播放，右键管理";
+    actionButton.addEventListener("click", (event) => {
       event.stopPropagation();
+      closeVideoActionMenu();
       sendRuntimeCommand(
         {
           type: MESSAGE.POPUP_PLAY_VIDEO,
@@ -411,25 +502,15 @@ function renderVideoList() {
         "播放失败"
       ).then(handleResultMessage);
     });
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.textContent = "删除";
-    deleteButton.addEventListener("click", (event) => {
+    actionButton.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
       event.stopPropagation();
-      const message = `确认删除「${video.title}」吗？`;
-      openConfirmDialog(message, () => {
-        deleteVideo(activeCategory.id, video.id).then((result) => {
-          if (!result.ok) {
-            setFeedback(result.message, true);
-            return;
-          }
-          setFeedback("已删除视频");
-        });
-      });
+      openVideoActionMenu(activeCategory.id, video.id, event.clientX, event.clientY);
     });
-    actions.appendChild(playButton);
-    actions.appendChild(deleteButton);
+
+    actions.appendChild(actionButton);
     card.appendChild(actions);
+
     card.addEventListener("click", () => {
       if (bulkSelection.enabled || Date.now() < dragState.suppressClickUntil) {
         return;
@@ -451,6 +532,7 @@ function attachDragEvents(card, categoryId, videoId) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", videoId);
   });
+
   card.addEventListener("dragover", (event) => {
     if (!dragState.videoId || dragState.videoId === videoId) {
       return;
@@ -465,6 +547,7 @@ function attachDragEvents(card, categoryId, videoId) {
       updateDragIndicators();
     }
   });
+
   card.addEventListener("drop", async (event) => {
     event.preventDefault();
     if (!dragState.videoId || dragState.videoId === videoId) {
@@ -489,6 +572,7 @@ function attachDragEvents(card, categoryId, videoId) {
       setFeedback(result.message, true);
     }
   });
+
   card.addEventListener("dragend", () => {
     clearDragState();
     updateDragIndicators();
@@ -496,7 +580,7 @@ function attachDragEvents(card, categoryId, videoId) {
 }
 
 function buildReorderedVideoIds(categoryId, sourceVideoId, targetVideoId, position) {
-  const category = state.categories.find((item) => item.id === categoryId);
+  const category = getCategoryById(categoryId);
   const videos = category?.videos || [];
   const sourceIndex = videos.findIndex((video) => video.id === sourceVideoId);
   const targetIndex = videos.findIndex((video) => video.id === targetVideoId);
@@ -524,7 +608,7 @@ function clearDragState() {
 }
 
 function updateDragIndicators() {
-  const cards = videoListEl.querySelectorAll(".video-card");
+  const cards = videoListEl?.querySelectorAll(".video-card") || [];
   cards.forEach((card) => {
     const isDragging = card.dataset.videoId === dragState.videoId;
     const isTarget = card.dataset.videoId === dragState.overVideoId;
@@ -532,6 +616,452 @@ function updateDragIndicators() {
     card.classList.toggle("is-drop-before", isTarget && dragState.position === "before");
     card.classList.toggle("is-drop-after", isTarget && dragState.position === "after");
   });
+}
+
+function openCategoryManager() {
+  if (!categoryManagerDialog) {
+    return;
+  }
+  closeVideoActionMenu();
+  categoryManagerDialog.hidden = false;
+  renderCategoryManager();
+}
+
+function closeCategoryManager(resetDragState = true) {
+  if (!categoryManagerDialog || categoryManagerDialog.hidden) {
+    return;
+  }
+  categoryManagerDialog.hidden = true;
+  if (resetDragState) {
+    clearCategoryManagerDragState();
+  }
+}
+
+function isCategoryManagerOpen() {
+  return Boolean(categoryManagerDialog && !categoryManagerDialog.hidden);
+}
+
+function renderCategoryManager() {
+  if (!categoryManagerList) {
+    return;
+  }
+  categoryManagerList.innerHTML = "";
+
+  state.categories.forEach((category) => {
+    const isDefault = category.id === DEFAULT_CATEGORY_ID;
+    const item = document.createElement("div");
+    item.className = "category-manager__item";
+    item.dataset.categoryId = category.id;
+
+    item.draggable = true;
+    item.classList.add("is-draggable");
+    attachCategoryDragEvents(item, category.id);
+
+    if (categoryManagerState.overCategoryId === category.id && categoryManagerState.position) {
+      item.classList.add(categoryManagerState.position === "before" ? "is-drop-before" : "is-drop-after");
+    }
+    if (categoryManagerState.dragCategoryId === category.id) {
+      item.classList.add("is-dragging");
+    }
+
+    const grip = document.createElement("div");
+    grip.className = "category-manager__grip";
+    grip.textContent = "\u22EE\u22EE";
+    item.appendChild(grip);
+
+    const body = document.createElement("div");
+    body.className = "category-manager__body";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.className = "category-manager__name";
+    nameInput.value = category.name;
+    nameInput.disabled = isDefault;
+    body.appendChild(nameInput);
+    item.appendChild(body);
+
+    const actions = document.createElement("div");
+    actions.className = "category-manager__actions";
+    if (!isDefault) {
+      const saveButton = document.createElement("button");
+      saveButton.type = "button";
+      saveButton.textContent = "保存";
+      syncRenameButtonState(saveButton, nameInput, category.name);
+      saveButton.addEventListener("click", () => {
+        submitCategoryRename(category.id, nameInput.value, category.name);
+      });
+      nameInput.addEventListener("input", () => {
+        syncRenameButtonState(saveButton, nameInput, category.name);
+      });
+      nameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          if (!saveButton.disabled) {
+            submitCategoryRename(category.id, nameInput.value, category.name);
+          }
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          nameInput.value = category.name;
+          syncRenameButtonState(saveButton, nameInput, category.name);
+        }
+      });
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.textContent = "删除";
+      deleteButton.className = "category-manager__delete";
+      deleteButton.addEventListener("click", () => {
+        openConfirmDialog(`确认删除「${category.name}」吗？`, () => {
+          sendRuntimeCommand(
+            { type: MESSAGE.PLAYLIST_DELETE_CATEGORY, payload: { categoryId: category.id } },
+            "删除失败"
+          ).then((result) => {
+            if (!result.ok) {
+              setFeedback(result.message, true);
+              return;
+            }
+            setFeedback("已删除分类");
+          });
+        });
+      });
+
+      actions.appendChild(saveButton);
+      actions.appendChild(deleteButton);
+    }
+    item.appendChild(actions);
+    categoryManagerList.appendChild(item);
+  });
+}
+
+function attachCategoryDragEvents(item, categoryId) {
+  item.addEventListener("dragstart", (event) => {
+    categoryManagerState.dragCategoryId = categoryId;
+    categoryManagerState.overCategoryId = null;
+    categoryManagerState.position = null;
+    item.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", categoryId);
+  });
+
+  item.addEventListener("dragover", (event) => {
+    if (!categoryManagerState.dragCategoryId || categoryManagerState.dragCategoryId === categoryId) {
+      return;
+    }
+    event.preventDefault();
+    const rect = item.getBoundingClientRect();
+    const position = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    if (categoryManagerState.overCategoryId !== categoryId || categoryManagerState.position !== position) {
+      categoryManagerState.overCategoryId = categoryId;
+      categoryManagerState.position = position;
+      updateCategoryDragIndicators();
+    }
+  });
+
+  item.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    if (!categoryManagerState.dragCategoryId || categoryManagerState.dragCategoryId === categoryId) {
+      clearCategoryManagerDragState();
+      updateCategoryDragIndicators();
+      return;
+    }
+    const nextOrder = buildReorderedCategoryIds(
+      categoryManagerState.dragCategoryId,
+      categoryId,
+      categoryManagerState.position || "after"
+    );
+    clearCategoryManagerDragState();
+    updateCategoryDragIndicators();
+    if (!nextOrder) {
+      return;
+    }
+    const result = await sendRuntimeCommand(
+      {
+        type: MESSAGE.PLAYLIST_REORDER_CATEGORIES,
+        payload: { categoryOrder: nextOrder }
+      },
+      "分类排序失败"
+    );
+    if (!result.ok) {
+      setFeedback(result.message, true);
+      return;
+    }
+    setFeedback("已更新分类顺序", false);
+  });
+
+  item.addEventListener("dragend", () => {
+    clearCategoryManagerDragState();
+    updateCategoryDragIndicators();
+  });
+}
+
+function buildReorderedCategoryIds(sourceCategoryId, targetCategoryId, position) {
+  const orderedIds = (state.categoryOrder.length ? state.categoryOrder : state.categories.map((category) => category.id)).filter(Boolean);
+  const sourceIndex = orderedIds.indexOf(sourceCategoryId);
+  const targetIndex = orderedIds.indexOf(targetCategoryId);
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+    return null;
+  }
+  const [movedId] = orderedIds.splice(sourceIndex, 1);
+  let insertIndex = orderedIds.indexOf(targetCategoryId);
+  if (insertIndex === -1) {
+    return null;
+  }
+  if (position === "after") {
+    insertIndex += 1;
+  }
+  orderedIds.splice(insertIndex, 0, movedId);
+  return orderedIds;
+}
+
+function clearCategoryManagerDragState() {
+  categoryManagerState.dragCategoryId = null;
+  categoryManagerState.overCategoryId = null;
+  categoryManagerState.position = null;
+}
+
+function updateCategoryDragIndicators() {
+  const items = categoryManagerList?.querySelectorAll(".category-manager__item") || [];
+  items.forEach((item) => {
+    const isDragging = item.dataset.categoryId === categoryManagerState.dragCategoryId;
+    const isTarget = item.dataset.categoryId === categoryManagerState.overCategoryId;
+    item.classList.toggle("is-dragging", isDragging);
+    item.classList.toggle("is-drop-before", isTarget && categoryManagerState.position === "before");
+    item.classList.toggle("is-drop-after", isTarget && categoryManagerState.position === "after");
+  });
+}
+
+function syncRenameButtonState(button, input, originalName) {
+  if (!button || !input) {
+    return;
+  }
+  const trimmed = input.value.trim();
+  button.disabled = !trimmed || trimmed === originalName;
+}
+
+function submitCategoryRename(categoryId, nextName, originalName) {
+  const trimmed = String(nextName || "").trim();
+  if (!trimmed) {
+    setFeedback("分类名称不能为空", true);
+    return;
+  }
+  if (trimmed === originalName) {
+    return;
+  }
+  sendRuntimeCommand(
+    { type: MESSAGE.PLAYLIST_RENAME_CATEGORY, payload: { categoryId, name: trimmed } },
+    "重命名失败"
+  ).then((result) => {
+    if (!result.ok) {
+      setFeedback(result.message, true);
+      return;
+    }
+    setFeedback("已重命名分类");
+  });
+}
+
+function openMoveVideoDialog(fromCategoryId, video) {
+  if (!fromCategoryId || !video?.id) {
+    setFeedback("缺少视频信息", true);
+    return;
+  }
+  if (state.categories.length < 2) {
+    setFeedback("至少需要两个分类才能移动", true);
+    return;
+  }
+  closeVideoActionMenu();
+  moveVideoState.fromCategoryId = fromCategoryId;
+  moveVideoState.videoId = video.id;
+  moveVideoState.title = video.title || "该视频";
+  renderMoveVideoDialog();
+}
+
+function renderMoveVideoDialog() {
+  if (!moveVideoDialog || !moveVideoSelect) {
+    return;
+  }
+  const sourceCategory = getCategoryById(moveVideoState.fromCategoryId);
+  const sourceVideo = sourceCategory?.videos?.find((video) => video.id === moveVideoState.videoId);
+  const targetCategories = state.categories.filter((category) => category.id !== moveVideoState.fromCategoryId);
+  if (!sourceCategory || !sourceVideo || !targetCategories.length) {
+    closeMoveVideoDialog(false);
+    return;
+  }
+
+  moveVideoText.textContent = `移动「${moveVideoState.title}」到`;
+  moveVideoSelect.innerHTML = "";
+  targetCategories.forEach((category, index) => {
+    const option = document.createElement("option");
+    option.value = category.id;
+    option.textContent = `${category.name} (${category.videos.length})`;
+    if (index === 0) {
+      option.selected = true;
+    }
+    moveVideoSelect.appendChild(option);
+  });
+  updateMoveVideoHint();
+  moveVideoDialog.hidden = false;
+}
+
+function updateMoveVideoHint() {
+  if (!moveVideoSelect || !moveVideoHint || !confirmMoveVideoBtn) {
+    return;
+  }
+  const targetCategory = getCategoryById(moveVideoSelect.value);
+  const hasSameVideo = Boolean(targetCategory?.videos?.some((video) => video.id === moveVideoState.videoId));
+  moveVideoHint.textContent = hasSameVideo ? "目标分类已有该视频，移动后会自动合并为一份" : "";
+  confirmMoveVideoBtn.disabled = !moveVideoSelect.value;
+}
+
+function isMoveVideoDialogOpen() {
+  return Boolean(moveVideoDialog && !moveVideoDialog.hidden);
+}
+
+function closeMoveVideoDialog(resetState = true) {
+  if (!moveVideoDialog || moveVideoDialog.hidden) {
+    return;
+  }
+  moveVideoDialog.hidden = true;
+  if (resetState) {
+    moveVideoState.videoId = null;
+    moveVideoState.fromCategoryId = null;
+    moveVideoState.title = "";
+    if (moveVideoSelect) {
+      moveVideoSelect.innerHTML = "";
+    }
+    if (moveVideoHint) {
+      moveVideoHint.textContent = "";
+    }
+  }
+}
+
+function createVideoActionMenu() {
+  const menu = document.createElement("div");
+  menu.className = "video-action-menu";
+  menu.hidden = true;
+
+  const moveButton = document.createElement("button");
+  moveButton.type = "button";
+  moveButton.textContent = "移动到...";
+  moveButton.addEventListener("click", () => {
+    const categoryId = actionMenuState.categoryId;
+    const videoId = actionMenuState.videoId;
+    const video = getVideoById(categoryId, videoId);
+    closeVideoActionMenu();
+    if (!video) {
+      setFeedback("未找到视频", true);
+      return;
+    }
+    openMoveVideoDialog(categoryId, video);
+  });
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.textContent = "删除";
+  deleteButton.className = "is-danger";
+  deleteButton.addEventListener("click", () => {
+    const categoryId = actionMenuState.categoryId;
+    const videoId = actionMenuState.videoId;
+    const video = getVideoById(categoryId, videoId);
+    closeVideoActionMenu();
+    if (!video) {
+      setFeedback("未找到视频", true);
+      return;
+    }
+    openConfirmDialog(`确认删除「${video.title}」吗？`, () => {
+      deleteVideo(categoryId, videoId).then((result) => {
+        if (!result.ok) {
+          setFeedback(result.message, true);
+          return;
+        }
+        setFeedback("已删除视频");
+      });
+    });
+  });
+
+  menu.appendChild(moveButton);
+  menu.appendChild(deleteButton);
+  document.body.appendChild(menu);
+  return menu;
+}
+
+function openVideoActionMenu(categoryId, videoId, clientX, clientY) {
+  const video = getVideoById(categoryId, videoId);
+  if (!video || !videoActionMenuEl) {
+    return;
+  }
+  const isSameTargetOpen = !videoActionMenuEl.hidden
+    && actionMenuState.categoryId === categoryId
+    && actionMenuState.videoId === videoId;
+  if (isSameTargetOpen) {
+    closeVideoActionMenu();
+    return;
+  }
+  actionMenuState.categoryId = categoryId;
+  actionMenuState.videoId = videoId;
+  actionMenuState.x = clientX;
+  actionMenuState.y = clientY;
+  renderVideoActionMenu();
+}
+
+function renderVideoActionMenu() {
+  if (!videoActionMenuEl || !actionMenuState.videoId) {
+    return;
+  }
+  const [moveButton] = videoActionMenuEl.querySelectorAll("button");
+  if (moveButton) {
+    moveButton.disabled = state.categories.length < 2;
+  }
+  videoActionMenuEl.hidden = false;
+  const margin = 10;
+  const menuRect = videoActionMenuEl.getBoundingClientRect();
+  const left = Math.min(actionMenuState.x, window.innerWidth - menuRect.width - margin);
+  const top = Math.min(actionMenuState.y, window.innerHeight - menuRect.height - margin);
+  videoActionMenuEl.style.left = `${Math.max(margin, left)}px`;
+  videoActionMenuEl.style.top = `${Math.max(margin, top)}px`;
+}
+
+function closeVideoActionMenu() {
+  if (!videoActionMenuEl || videoActionMenuEl.hidden) {
+    return;
+  }
+  videoActionMenuEl.hidden = true;
+  actionMenuState.categoryId = null;
+  actionMenuState.videoId = null;
+}
+
+function syncVideoActionMenuState() {
+  if (!actionMenuState.videoId) {
+    return;
+  }
+  const video = getVideoById(actionMenuState.categoryId, actionMenuState.videoId);
+  if (!video) {
+    closeVideoActionMenu();
+    return;
+  }
+  renderVideoActionMenu();
+}
+
+async function submitMoveVideo() {
+  const fromCategoryId = moveVideoState.fromCategoryId;
+  const videoId = moveVideoState.videoId;
+  const toCategoryId = moveVideoSelect?.value;
+  if (!fromCategoryId || !videoId || !toCategoryId) {
+    setFeedback("请选择目标分类", true);
+    return;
+  }
+  const result = await sendRuntimeCommand(
+    {
+      type: MESSAGE.PLAYLIST_MOVE_VIDEO,
+      payload: { fromCategoryId, toCategoryId, videoId }
+    },
+    "移动失败"
+  );
+  if (!result.ok) {
+    setFeedback(result.message, true);
+    return;
+  }
+  closeMoveVideoDialog();
+  setFeedback("已移动视频");
 }
 
 async function openVideoPage(url) {
@@ -571,7 +1101,7 @@ async function prepareImportPlaylist(file) {
   try {
     const text = await file.text();
     data = JSON.parse(text);
-  } catch (error) {
+  } catch {
     setFeedback("导入文件不是有效的 JSON", true);
     return;
   }
@@ -608,8 +1138,12 @@ function buildExportFilename() {
 }
 
 function updateProgressLabel(progress, duration) {
-  currentTimeEl.textContent = formatTime(progress);
-  durationTimeEl.textContent = formatTime(duration);
+  if (currentTimeEl) {
+    currentTimeEl.textContent = formatTime(progress);
+  }
+  if (durationTimeEl) {
+    durationTimeEl.textContent = formatTime(duration);
+  }
 }
 
 function formatTime(value) {
@@ -661,6 +1195,9 @@ function setFeedback(text, isError = false) {
 }
 
 async function addCurrentVideoToList() {
+  if (!addCurrentBtn) {
+    return;
+  }
   addCurrentBtn.disabled = true;
   const videoResult = await queryActiveTabVideo();
   if (!videoResult.ok) {
@@ -711,7 +1248,9 @@ async function queryActiveTabVideo() {
 }
 
 function setTooltip(element, label) {
-  if (!element) return;
+  if (!element) {
+    return;
+  }
   if (label) {
     element.dataset.tooltip = label;
     element.setAttribute("aria-label", label);
@@ -723,37 +1262,8 @@ function setTooltip(element, label) {
   }
 }
 
-function toggleCategoryPopover() {
-  if (!categoryPopover) return;
-  if (categoryPopover.hidden) {
-    openCategoryPopover();
-  } else {
-    closeCategoryPopover();
-  }
-}
-
-function openCategoryPopover() {
-  if (!categoryPopover) return;
-  categoryPopover.hidden = false;
-  categoryPopover.classList.add("is-open");
-  requestAnimationFrame(() => {
-    newCategoryInput?.focus();
-  });
-}
-
-function closeCategoryPopover(resetInput = true) {
-  if (!categoryPopover || categoryPopover.hidden) {
-    return;
-  }
-  categoryPopover.classList.remove("is-open");
-  categoryPopover.hidden = true;
-  if (resetInput && newCategoryInput) {
-    newCategoryInput.value = "";
-  }
-}
-
 function submitNewCategory() {
-  const name = newCategoryInput?.value.trim();
+  const name = managerCategoryInput?.value.trim();
   if (!name) {
     setFeedback("请输入分类名", true);
     return;
@@ -764,12 +1274,17 @@ function submitNewCategory() {
       return;
     }
     setFeedback("已创建分类");
-    closeCategoryPopover();
+    if (managerCategoryInput) {
+      managerCategoryInput.value = "";
+      managerCategoryInput.focus();
+    }
   });
 }
 
 function openConfirmDialog(message, action) {
-  if (!deleteConfirmDialog) return;
+  if (!deleteConfirmDialog || !deleteConfirmText) {
+    return;
+  }
   deleteConfirmText.textContent = message || "确认执行该操作吗？";
   pendingConfirmAction = typeof action === "function" ? action : null;
   deleteConfirmDialog.hidden = false;
@@ -836,6 +1351,18 @@ function deleteVideo(categoryId, videoId) {
   );
 }
 
+function getCategoryById(categoryId) {
+  return state.categories.find((category) => category.id === categoryId) || null;
+}
+
+function getVideoById(categoryId, videoId) {
+  return getCategoryById(categoryId)?.videos?.find((video) => video.id === videoId) || null;
+}
+
+function getActiveCategory() {
+  return getCategoryById(state.activeCategoryId);
+}
+
 async function initializePopup() {
   try {
     const snapshot = await chrome.runtime.sendMessage({ type: MESSAGE.POPUP_INIT });
@@ -866,6 +1393,3 @@ function handleResultMessage(result) {
     setFeedback(result?.message || "操作失败", true);
   }
 }
-
-
-

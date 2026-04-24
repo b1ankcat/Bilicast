@@ -40,8 +40,7 @@
         </div>
         <div class="category-toolbar">
           <select id="categorySelect"></select>
-          <button id="deleteCategoryBtn" class="icon-btn has-tooltip" data-tooltip="删除分类" aria-label="删除分类">&#128465;</button>
-          <button id="addCategoryBtn" class="icon-btn accent has-tooltip" data-tooltip="新建分类" aria-label="新建分类">＋</button>
+          <button id="manageCategoriesBtn" class="icon-btn has-tooltip" data-tooltip="管理分类" aria-label="管理分类">&#9776;</button>
         </div>
       </section>
       <section class="panel row row-list">
@@ -63,13 +62,27 @@
       </section>
     </div>
     <input id="importFileInput" type="file" accept="application/json,.json" hidden />
-    <div id="categoryCreatePopover" class="modal-overlay" hidden>
+    <div id="categoryManagerDialog" class="modal-overlay" hidden>
+      <div class="modal-panel modal-panel--manager">
+        <div class="modal-header">
+          <p>分类管理</p>
+          <div class="category-manager-create">
+            <input type="text" id="managerCategoryInput" placeholder="新分类" />
+            <button id="managerCategoryConfirmBtn" type="button" class="accent">确定</button>
+          </div>
+          <button id="closeCategoryManagerBtn" type="button" class="modal-close" aria-label="关闭">×</button>
+        </div>
+        <div id="categoryManagerList" class="category-manager-list"></div>
+      </div>
+    </div>
+    <div id="moveVideoDialog" class="modal-overlay" hidden>
       <div class="modal-panel">
-        <p>新建分类</p>
-        <input type="text" id="newCategoryInput" placeholder="输入分类名称" />
+        <p id="moveVideoText">移动到其他分类</p>
+        <select id="moveVideoSelect"></select>
+        <div id="moveVideoHint" class="modal-hint"></div>
         <div class="modal-actions">
-          <button id="cancelCategoryBtn" type="button">取消</button>
-          <button id="confirmCategoryBtn" type="button" class="accent">确定</button>
+          <button id="cancelMoveVideoBtn" type="button">取消</button>
+          <button id="confirmMoveVideoBtn" type="button" class="accent">移动</button>
         </div>
       </div>
     </div>

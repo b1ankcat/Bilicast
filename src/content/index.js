@@ -117,8 +117,13 @@ function initContentScript(MESSAGE) {
         background: #fb7299;
         color: #fff;
       }
-      .bilicast-popover__actions button:nth-child(2) {
-        background: rgba(255, 255, 255, 0.15);
+      .bilicast-popover button:disabled {
+        cursor: not-allowed;
+        opacity: 0.65;
+      }
+      .bilicast-popover__actions button:disabled {
+        background: rgba(255, 255, 255, 0.18);
+        color: rgba(255, 255, 255, 0.72);
       }
       .bilicast-popover__new {
         display: flex;
@@ -131,6 +136,14 @@ function initContentScript(MESSAGE) {
       .bilicast-popover__new button {
         background: rgba(255, 255, 255, 0.15);
         color: #fff;
+      }
+      .bilicast-popover__status {
+        min-height: 16px;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.88);
+      }
+      .bilicast-popover__status.is-empty {
+        color: rgba(255, 255, 255, 0.56);
       }
       .bilicast-popover__message {
         font-size: 12px;
@@ -351,9 +364,9 @@ function initContentScript(MESSAGE) {
       <label>分类
         <select class="bilicast-popover__select"></select>
       </label>
+      <div class="bilicast-popover__status is-empty">未收藏</div>
       <div class="bilicast-popover__actions">
         <button data-action="add">添加</button>
-        <button data-action="delete">删除</button>
       </div>
       <div class="bilicast-popover__new">
         <input type="text" placeholder="新分类名称" class="bilicast-popover__input" />
@@ -363,11 +376,17 @@ function initContentScript(MESSAGE) {
     `;
     document.body.appendChild(this.root);
     this.select = this.root.querySelector("select");
+    this.status = this.root.querySelector(".bilicast-popover__status");
     this.newInput = this.root.querySelector(".bilicast-popover__input");
     this.message = this.root.querySelector(".bilicast-popover__message");
+    this.addButton = this.root.querySelector('[data-action="add"]');
     this.categories = [];
+    this.memberships = [];
     this.messageTimer = null;
     this.root.addEventListener("click", (event) => event.stopPropagation());
+    this.select.addEventListener("change", () => {
+      this.syncSelectedCategoryState();
+    });
     document.addEventListener("click", (event) => {
       if (!this.root.contains(event.target) && !event.target.closest?.(`#${BUTTON_ID}`)) {
         this.hide();
@@ -401,8 +420,6 @@ function initContentScript(MESSAGE) {
     const categories = Array.isArray(this.categories) ? this.categories : [];
     if (!categories.length) {
       this.setMessage("请先新建分类", true);
-    } else {
-      this.setMessage("", false);
     }
     this.root.classList.add("is-visible");
     const rect = anchor.getBoundingClientRect();
@@ -422,34 +439,87 @@ function initContentScript(MESSAGE) {
     this.setMessage("", false);
   };
 
-  PlaylistPopover.prototype.refreshCategories = async function () {
+  PlaylistPopover.prototype.requestRuntime = async function (message, fallbackMessage) {
     try {
-      const response = await chrome.runtime.sendMessage({ type: MESSAGE.PLAYLIST_GET_CATEGORIES });
-      this.categories = response?.categories || [];
-      const active = response?.activeCategoryId;
-      this.select.innerHTML = "";
-      this.categories.forEach((category) => {
-        const option = document.createElement("option");
-        option.value = category.id;
-        option.textContent = `${category.name} (${category.count})`;
-        if (category.id === active) {
-          option.selected = true;
-        }
-        this.select.appendChild(option);
-      });
+      const response = await chrome.runtime.sendMessage(message);
+      if (response?.ok === false) {
+        return { ok: false, message: response.message || fallbackMessage };
+      }
+      return { ok: true, ...(response || {}) };
     } catch (error) {
+      return { ok: false, message: error?.message || fallbackMessage };
+    }
+  };
+
+  PlaylistPopover.prototype.renderMembershipStatus = function () {
+    const membershipNames = this.memberships.map((category) => category.name).filter(Boolean);
+    if (!membershipNames.length) {
+      this.status.textContent = "未收藏";
+      this.status.classList.add("is-empty");
+      return;
+    }
+    this.status.textContent = `已在：${membershipNames.join("、")}`;
+    this.status.classList.remove("is-empty");
+  };
+
+  PlaylistPopover.prototype.syncSelectedCategoryState = function () {
+    const selectedCategoryId = this.select.value;
+    const existsInSelected = this.memberships.some((category) => category.id === selectedCategoryId);
+    this.addButton.disabled = !selectedCategoryId || existsInSelected;
+    this.addButton.textContent = existsInSelected ? "已在该分类" : "添加";
+  };
+
+  PlaylistPopover.prototype.refreshCategories = async function () {
+    const categoriesResponse = await this.requestRuntime(
+      { type: MESSAGE.PLAYLIST_GET_CATEGORIES },
+      "加载分类失败"
+    );
+    if (!categoriesResponse.ok) {
       this.categories = [];
-      this.setMessage(error.message || "加载分类失败", true);
+      this.memberships = [];
+      this.select.innerHTML = "";
+      this.renderMembershipStatus();
+      this.syncSelectedCategoryState();
+      this.setMessage(categoriesResponse.message || "加载分类失败", true);
+      return;
+    }
+    const membershipsResponse = await this.requestRuntime(
+      {
+        type: MESSAGE.PLAYLIST_GET_VIDEO_MEMBERSHIPS,
+        payload: {
+          videoId: this.video?.id,
+          bvid: this.video?.bvid,
+          pageIndex: this.video?.pageIndex
+        }
+      },
+      "读取收藏状态失败"
+    );
+    this.categories = Array.isArray(categoriesResponse.categories) ? categoriesResponse.categories : [];
+    this.memberships = membershipsResponse.ok && Array.isArray(membershipsResponse.categories)
+      ? membershipsResponse.categories
+      : [];
+    const membershipIds = new Set(this.memberships.map((category) => category.id));
+    const active = categoriesResponse.activeCategoryId;
+    this.select.innerHTML = "";
+    this.categories.forEach((category) => {
+      const option = document.createElement("option");
+      option.value = category.id;
+      option.textContent = `${category.name} (${category.count})${membershipIds.has(category.id) ? " · 已有" : ""}`;
+      if (category.id === active) {
+        option.selected = true;
+      }
+      this.select.appendChild(option);
+    });
+    this.renderMembershipStatus();
+    this.syncSelectedCategoryState();
+    if (!membershipsResponse.ok) {
+      this.setMessage(membershipsResponse.message || "读取收藏状态失败", true);
     }
   };
 
   PlaylistPopover.prototype.handleAction = async function (action) {
     if (action === "add") {
       await this.addToCategory();
-      return;
-    }
-    if (action === "delete") {
-      await this.deleteCategory();
       return;
     }
     if (action === "create") {
@@ -463,20 +533,27 @@ function initContentScript(MESSAGE) {
       this.setMessage("请选择分类", true);
       return;
     }
-    try {
-      await chrome.runtime.sendMessage({
+    if (this.memberships.some((category) => category.id === categoryId)) {
+      this.syncSelectedCategoryState();
+      return;
+    }
+    const result = await this.requestRuntime(
+      {
         type: MESSAGE.PLAYLIST_ADD_VIDEO,
         payload: { categoryId, video: this.video }
-      });
-      this.setMessage(options.message || "已添加", false);
-      if (!options.skipToast) {
-        showToast(options.toastText || "已加入播放列表");
-      }
-      if (!options.keepOpen) {
-        this.hide();
-      }
-    } catch (error) {
-      this.setMessage(error.message || "添加失败", true);
+      },
+      "添加失败"
+    );
+    if (!result.ok) {
+      this.setMessage(result.message || "添加失败", true);
+      return;
+    }
+    this.setMessage(options.message || "已添加", false);
+    if (!options.skipToast) {
+      showToast(options.toastText || "已加入播放列表");
+    }
+    if (!options.keepOpen) {
+      this.hide();
     }
   };
 
@@ -486,46 +563,29 @@ function initContentScript(MESSAGE) {
       this.setMessage("请输入分类名", true);
       return;
     }
-    try {
-      const res = await chrome.runtime.sendMessage({
+    const res = await this.requestRuntime(
+      {
         type: MESSAGE.PLAYLIST_CREATE_CATEGORY,
         payload: { name }
-      });
-      this.newInput.value = "";
-      await this.refreshCategories();
-      const newId = res?.category?.id;
-      this.select.value = newId || this.select.value;
-      if (newId) {
-        await this.addToCategory({
-          message: "分类已创建并已添加",
-          toastText: "已添加到新分类"
-        });
-      } else {
-        this.setMessage("分类已创建");
-      }
-    } catch (error) {
-      this.setMessage(error.message || "创建失败", true);
-    }
-  };
-
-  PlaylistPopover.prototype.deleteCategory = async function () {
-    const categoryId = this.select.value;
-    if (!categoryId) {
-      this.setMessage("请选择分类", true);
+      },
+      "创建失败"
+    );
+    if (!res.ok) {
+      this.setMessage(res.message || "创建失败", true);
       return;
     }
-    if (!confirm("确定要删除该分类吗？")) {
-      return;
-    }
-    try {
-      await chrome.runtime.sendMessage({
-        type: MESSAGE.PLAYLIST_DELETE_CATEGORY,
-        payload: { categoryId }
+    this.newInput.value = "";
+    await this.refreshCategories();
+    const newId = res?.category?.id;
+    this.select.value = newId || this.select.value;
+    this.syncSelectedCategoryState();
+    if (newId) {
+      await this.addToCategory({
+        message: "分类已创建并已添加",
+        toastText: "已添加到新分类"
       });
-      await this.refreshCategories();
-      this.setMessage("已删除，重新选择分类");
-    } catch (error) {
-      this.setMessage(error.message || "删除失败", true);
+    } else {
+      this.setMessage("分类已创建");
     }
   };
 }
