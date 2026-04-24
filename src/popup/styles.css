@@ -427,6 +427,18 @@ textarea {
   color: var(--text-subtle);
 }
 
+.list-actions__tools {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.list-actions__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .bulk-toggle {
   display: flex;
   align-items: center;
@@ -448,6 +460,22 @@ textarea {
   color: var(--text);
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease;
+}
+
+.list-actions__group button {
+  border: none;
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.list-actions__group button:hover {
+  background: rgba(251, 114, 153, 0.2);
+  color: var(--accent-strong);
 }
 
 #bulkDeleteBtn:disabled {
@@ -485,6 +513,10 @@ textarea {
   background: transparent;
 }
 
+.video-card.is-draggable {
+  cursor: grab;
+}
+
 .video-card.has-selection {
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 6px;
@@ -506,6 +538,19 @@ textarea {
   background: rgba(251, 114, 153, 0.07);
 }
 
+.video-card.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.video-card.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.video-card.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
 .video-card.is-active {
   border-color: var(--accent);
   background: rgba(251, 114, 153, 0.12);
@@ -515,6 +560,7 @@ textarea {
   display: flex;
   min-width: 0;
   align-items: flex-start;
+  cursor: pointer;
 }
 
 .video-card__title {
@@ -558,23 +604,25 @@ textarea {
 }
 
 .feedback {
-  flex: 0 1 auto;
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
   min-width: 0;
-  max-width: 0;
+  max-width: 180px;
   opacity: 0;
   overflow: hidden;
   white-space: nowrap;
   pointer-events: none;
   font-size: 12px;
   color: var(--text-subtle);
-  text-align: center;
-  transition: max-width 0.2s ease, opacity 0.2s ease;
+  text-align: left;
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .feedback.is-visible {
-  flex: 1 1 auto;
-  max-width: 180px;
   opacity: 1;
+  transform: translateY(-50%) translateX(0);
 }
 
 .feedback.is-error {

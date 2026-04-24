@@ -31,8 +31,54 @@ Bilicast 是一个 Chrome Manifest V3 扩展，面向把 B 站当作音乐、播
 - 单曲循环 / 列表循环 / 全部循环 / 随机播放
 - 进度调整与音量控制
 - 当前播放高亮
+- Popup 分类列表拖拽排序
+- 单击列表项直接打开原始视频页
 - 批量删除列表项
+- 导入 / 导出播放列表
 - 音频地址自动解析与失效重取
+
+## Playlist Import / Export
+
+播放列表支持导入和导出 JSON 文件，使用最小化、标准化结构，只保留恢复列表所需的必要字段，不导出音频地址、封面、时长、`cid` 等运行时数据。
+
+标准结构：
+
+```json
+{
+  "schema": "bilicast.playlist",
+  "version": 1,
+  "activeCategoryIndex": 0,
+  "categories": [
+    {
+      "name": "稍后播放",
+      "videos": [
+        {
+          "bvid": "BVxxxx",
+          "page": 1,
+          "title": "歌曲标题"
+        }
+      ]
+    }
+  ]
+}
+```
+
+字段说明：
+
+- `schema`: 固定为 `bilicast.playlist`
+- `version`: 当前版本固定为 `1`
+- `activeCategoryIndex`: 当前激活分类在 `categories` 中的下标
+- `categories[].name`: 分类名称
+- `categories[].videos[].bvid`: B 站视频 `BV` 号
+- `categories[].videos[].page`: 多 P 页码，最小为 `1`
+- `categories[].videos[].title`: 展示标题
+
+导入行为：
+
+- 导入会覆盖当前播放列表
+- 当前播放会停止
+- 播放模式和音量设置会保留
+- 导入后视频页链接会根据 `bvid + page` 自动重建
 
 ## Install
 
@@ -81,10 +127,9 @@ pnpm build
 
 ## Roadmap
 
-- 拖拽排序
-- 导入 / 导出播放列表
-- 最近播放与历史记录
-- 快捷键控制
+- ✅ 拖拽排序
+- ✅ 单击打开原始视频页
+- ✅ 导入 / 导出播放列表
 - 整页合集批量加入
 - 更稳的音频容错与质量选择
 

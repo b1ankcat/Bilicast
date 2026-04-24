@@ -2,6 +2,8 @@
 
 export const STORAGE_KEY = "bilicast.state";
 export const DEFAULT_CATEGORY_ID = "category-default";
+export const PORTABLE_PLAYLIST_SCHEMA = "bilicast.playlist";
+export const PORTABLE_PLAYLIST_VERSION = 1;
 
 export function createDefaultCategory() {
   return {
@@ -42,6 +44,11 @@ export function createDefaultState() {
   };
 }
 
+export function buildVideoUrl({ bvid, pageIndex = 1 }) {
+  const page = Number(pageIndex) || 1;
+  return `https://www.bilibili.com/video/${bvid}?p=${page}&t=0`;
+}
+
 export function normalizeVideoUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -59,6 +66,7 @@ export function makeVideoId({ bvid, page = 1 }) {
 
 export function createVideoEntry(data) {
   const videoId = data.id || makeVideoId({ bvid: data.bvid, page: data.pageIndex });
+  const normalizedUrl = data.url || buildVideoUrl({ bvid: data.bvid, pageIndex: data.pageIndex });
   return {
     id: videoId,
     bvid: data.bvid,
@@ -74,7 +82,78 @@ export function createVideoEntry(data) {
       : data.audioUrl
         ? [data.audioUrl]
         : [],
-    url: normalizeVideoUrl(data.url),
+    url: normalizeVideoUrl(normalizedUrl),
     addedAt: Date.now()
   };
+}
+
+export function exportPortablePlaylist(state) {
+  const categories = (state?.categoryOrder || [])
+    .map((id) => state?.categories?.[id])
+    .filter(Boolean)
+    .map((category) => ({
+      name: category.name || DEFAULT_CATEGORY_NAME,
+      videos: (category.videos || []).map((video) => ({
+        bvid: String(video.bvid || "").trim(),
+        page: Math.max(1, Number(video.pageIndex) || 1),
+        title: String(video.title || "").trim() || buildVideoTitleFallback(video.bvid, video.pageIndex)
+      }))
+    }));
+  const activeCategoryIndex = Math.max(0, (state?.categoryOrder || []).indexOf(state?.activeCategoryId));
+  return {
+    schema: PORTABLE_PLAYLIST_SCHEMA,
+    version: PORTABLE_PLAYLIST_VERSION,
+    activeCategoryIndex,
+    categories
+  };
+}
+
+export function parsePortablePlaylist(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("导入文件格式无效");
+  }
+  if (raw.schema !== PORTABLE_PLAYLIST_SCHEMA) {
+    throw new Error("不支持的播放列表格式");
+  }
+  if (raw.version !== PORTABLE_PLAYLIST_VERSION) {
+    throw new Error("不支持的播放列表版本");
+  }
+  if (!Array.isArray(raw.categories) || raw.categories.length === 0) {
+    throw new Error("播放列表至少包含一个分类");
+  }
+  const categories = raw.categories.map((category, categoryIndex) => {
+    const name = String(category?.name || "").trim() || `${DEFAULT_CATEGORY_NAME} ${categoryIndex + 1}`;
+    const inputVideos = Array.isArray(category?.videos) ? category.videos : [];
+    const seenVideoIds = new Set();
+    const videos = [];
+    for (const video of inputVideos) {
+      const bvid = String(video?.bvid || "").trim();
+      if (!/^BV[\w]+$/i.test(bvid)) {
+        throw new Error(`分类「${name}」存在无效 BV 号`);
+      }
+      const page = Math.max(1, Number(video?.page) || 1);
+      const id = makeVideoId({ bvid, page });
+      if (seenVideoIds.has(id)) {
+        continue;
+      }
+      seenVideoIds.add(id);
+      const title = String(video?.title || "").trim() || buildVideoTitleFallback(bvid, page);
+      videos.push({ bvid, page, title });
+    }
+    return { name, videos };
+  });
+  const rawIndex = Number(raw.activeCategoryIndex);
+  const activeCategoryIndex = Number.isInteger(rawIndex)
+    ? Math.min(Math.max(rawIndex, 0), categories.length - 1)
+    : 0;
+  return {
+    schema: PORTABLE_PLAYLIST_SCHEMA,
+    version: PORTABLE_PLAYLIST_VERSION,
+    activeCategoryIndex,
+    categories
+  };
+}
+
+function buildVideoTitleFallback(bvid, pageIndex) {
+  return `${String(bvid || "").trim() || "BV"} P${Math.max(1, Number(pageIndex) || 1)}`;
 }

@@ -44,6 +44,9 @@ const cancelDeleteBtn = document.getElementById("cancelDeleteBtn");
 const volumeSlider = document.getElementById("volumeSlider");
 const bulkToggle = document.getElementById("bulkSelectToggle");
 const bulkDeleteBtn = document.getElementById("bulkDeleteBtn");
+const importBtn = document.getElementById("importBtn");
+const exportBtn = document.getElementById("exportBtn");
+const importFileInput = document.getElementById("importFileInput");
 const videoListEl = document.getElementById("videoList");
 const feedbackEl = document.getElementById("categoryFeedback");
 
@@ -54,6 +57,12 @@ const bulkSelection = {
   enabled: false,
   categoryId: null,
   ids: new Set()
+};
+const dragState = {
+  videoId: null,
+  overVideoId: null,
+  position: null,
+  suppressClickUntil: 0
 };
 
 setTooltip(prevBtn, "上一条");
@@ -158,6 +167,26 @@ bulkDeleteBtn?.addEventListener("click", () => {
   openConfirmDialog(`确认删除选中的 ${count} 个视频吗？`, () => {
     performBulkDelete(categoryId, Array.from(bulkSelection.ids));
   });
+});
+
+importBtn?.addEventListener("click", () => {
+  if (!importFileInput) {
+    return;
+  }
+  importFileInput.value = "";
+  importFileInput.click();
+});
+
+exportBtn?.addEventListener("click", () => {
+  exportPlaylistFile();
+});
+
+importFileInput?.addEventListener("change", () => {
+  const file = importFileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+  prepareImportPlaylist(file);
 });
 
 updateBulkUI();
@@ -312,8 +341,17 @@ function renderVideoList() {
   activeCategory.videos.forEach((video) => {
     const card = document.createElement("div");
     card.className = "video-card";
+    card.dataset.videoId = video.id;
     if (video.id === state.playback.videoId) {
       card.classList.add("is-active");
+    }
+    if (!bulkSelection.enabled) {
+      card.draggable = true;
+      card.classList.add("is-draggable");
+      attachDragEvents(card, activeCategory.id, video.id);
+    }
+    if (dragState.overVideoId === video.id && dragState.position) {
+      card.classList.add(dragState.position === "before" ? "is-drop-before" : "is-drop-after");
     }
     if (bulkSelection.enabled) {
       card.classList.add("has-selection");
@@ -346,6 +384,7 @@ function renderVideoList() {
     const actions = document.createElement("div");
     actions.className = "video-card__actions";
     const playButton = document.createElement("button");
+    playButton.type = "button";
     playButton.textContent = "播放";
     playButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -358,6 +397,7 @@ function renderVideoList() {
       ).then(handleResultMessage);
     });
     const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
     deleteButton.textContent = "删除";
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -375,9 +415,181 @@ function renderVideoList() {
     actions.appendChild(playButton);
     actions.appendChild(deleteButton);
     card.appendChild(actions);
+    card.addEventListener("click", () => {
+      if (bulkSelection.enabled || Date.now() < dragState.suppressClickUntil) {
+        return;
+      }
+      openVideoPage(video.url);
+    });
 
     videoListEl.appendChild(card);
   });
+}
+
+function attachDragEvents(card, categoryId, videoId) {
+  card.addEventListener("dragstart", (event) => {
+    dragState.videoId = videoId;
+    dragState.overVideoId = null;
+    dragState.position = null;
+    dragState.suppressClickUntil = Date.now() + 400;
+    card.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", videoId);
+  });
+  card.addEventListener("dragover", (event) => {
+    if (!dragState.videoId || dragState.videoId === videoId) {
+      return;
+    }
+    event.preventDefault();
+    const rect = card.getBoundingClientRect();
+    const isBefore = event.clientY < rect.top + rect.height / 2;
+    const position = isBefore ? "before" : "after";
+    if (dragState.overVideoId !== videoId || dragState.position !== position) {
+      dragState.overVideoId = videoId;
+      dragState.position = position;
+      updateDragIndicators();
+    }
+  });
+  card.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    if (!dragState.videoId || dragState.videoId === videoId) {
+      clearDragState();
+      updateDragIndicators();
+      return;
+    }
+    const nextOrder = buildReorderedVideoIds(categoryId, dragState.videoId, videoId, dragState.position || "after");
+    clearDragState();
+    updateDragIndicators();
+    if (!nextOrder) {
+      return;
+    }
+    const result = await sendRuntimeCommand(
+      {
+        type: MESSAGE.PLAYLIST_REORDER_VIDEOS,
+        payload: { categoryId, videoIds: nextOrder }
+      },
+      "排序失败"
+    );
+    if (!result.ok) {
+      setFeedback(result.message, true);
+    }
+  });
+  card.addEventListener("dragend", () => {
+    clearDragState();
+    updateDragIndicators();
+  });
+}
+
+function buildReorderedVideoIds(categoryId, sourceVideoId, targetVideoId, position) {
+  const category = state.categories.find((item) => item.id === categoryId);
+  const videos = category?.videos || [];
+  const sourceIndex = videos.findIndex((video) => video.id === sourceVideoId);
+  const targetIndex = videos.findIndex((video) => video.id === targetVideoId);
+  if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+    return null;
+  }
+  const orderedIds = videos.map((video) => video.id);
+  const [movedId] = orderedIds.splice(sourceIndex, 1);
+  let insertIndex = orderedIds.indexOf(targetVideoId);
+  if (insertIndex === -1) {
+    return null;
+  }
+  if (position === "after") {
+    insertIndex += 1;
+  }
+  orderedIds.splice(insertIndex, 0, movedId);
+  return orderedIds;
+}
+
+function clearDragState() {
+  dragState.videoId = null;
+  dragState.overVideoId = null;
+  dragState.position = null;
+  dragState.suppressClickUntil = Date.now() + 250;
+}
+
+function updateDragIndicators() {
+  const cards = videoListEl.querySelectorAll(".video-card");
+  cards.forEach((card) => {
+    const isDragging = card.dataset.videoId === dragState.videoId;
+    const isTarget = card.dataset.videoId === dragState.overVideoId;
+    card.classList.toggle("is-dragging", isDragging);
+    card.classList.toggle("is-drop-before", isTarget && dragState.position === "before");
+    card.classList.toggle("is-drop-after", isTarget && dragState.position === "after");
+  });
+}
+
+async function openVideoPage(url) {
+  if (!url) {
+    setFeedback("未找到视频地址", true);
+    return;
+  }
+  try {
+    await chrome.tabs.create({ url, active: true });
+  } catch (error) {
+    setFeedback(error?.message || "打开视频页失败", true);
+  }
+}
+
+async function exportPlaylistFile() {
+  const result = await sendRuntimeCommand({ type: MESSAGE.PLAYLIST_EXPORT }, "导出失败");
+  if (!result.ok || !result.data) {
+    setFeedback(result.message || "导出失败", true);
+    return;
+  }
+  try {
+    const blob = new Blob([`${JSON.stringify(result.data, null, 2)}\n`], { type: "application/json" });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = buildExportFilename();
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    setFeedback("已导出播放列表");
+  } catch (error) {
+    setFeedback(error?.message || "导出失败", true);
+  }
+}
+
+async function prepareImportPlaylist(file) {
+  let data;
+  try {
+    const text = await file.text();
+    data = JSON.parse(text);
+  } catch (error) {
+    setFeedback("导入文件不是有效的 JSON", true);
+    return;
+  }
+  openConfirmDialog("导入将覆盖当前播放列表，确认继续吗？", async () => {
+    const result = await sendRuntimeCommand(
+      {
+        type: MESSAGE.PLAYLIST_IMPORT,
+        payload: { data }
+      },
+      "导入失败"
+    );
+    if (!result.ok) {
+      setFeedback(result.message || "导入失败", true);
+      return;
+    }
+    const categoryCount = Number(result.categoryCount) || 0;
+    const videoCount = Number(result.videoCount) || 0;
+    setFeedback(`已导入 ${categoryCount} 个分类 / ${videoCount} 个视频`);
+  });
+}
+
+function buildExportFilename() {
+  const now = new Date();
+  const parts = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    "-",
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0")
+  ];
+  return `bilicast-playlist-${parts.join("")}.json`;
 }
 
 function updateProgressLabel(progress, duration) {

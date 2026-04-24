@@ -44,12 +44,19 @@
             <input type="checkbox" id="bulkSelectToggle" />
             多选
           </label>
-          <div id="categoryFeedback" class="feedback" aria-live="polite"></div>
+          <div class="list-actions__tools">
+            <div class="list-actions__group">
+              <button id="importBtn" type="button">导入</button>
+              <button id="exportBtn" type="button">导出</button>
+            </div>
+            <div id="categoryFeedback" class="feedback" aria-live="polite"></div>
+          </div>
           <button id="bulkDeleteBtn" disabled>批量删除</button>
         </div>
         <div id="videoList" class="video-list"></div>
       </section>
     </div>
+    <input id="importFileInput" type="file" accept="application/json,.json" hidden />
     <div id="categoryCreatePopover" class="modal-overlay" hidden>
       <div class="modal-panel">
         <p>新建分类</p>

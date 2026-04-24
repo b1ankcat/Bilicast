@@ -13,6 +13,9 @@
   PLAYLIST_CREATE_CATEGORY: "playlist:createCategory",
   PLAYLIST_DELETE_CATEGORY: "playlist:deleteCategory",
   PLAYLIST_DELETE_VIDEO: "playlist:deleteVideo",
+  PLAYLIST_REORDER_VIDEOS: "playlist:reorderVideos",
+  PLAYLIST_EXPORT: "playlist:export",
+  PLAYLIST_IMPORT: "playlist:import",
 
   STORAGE_PUSH: "storage:push",
   POPUP_FEEDBACK: "popup:feedback",

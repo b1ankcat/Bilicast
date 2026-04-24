@@ -4,7 +4,9 @@ import {
   createDefaultState,
   createCategory,
   createVideoEntry,
-  DEFAULT_CATEGORY_ID
+  DEFAULT_CATEGORY_ID,
+  exportPortablePlaylist,
+  parsePortablePlaylist
 } from "../shared/playlist.js";
 
 const OFFSCREEN_PATH = "src/background/offscreen.html";
@@ -74,6 +76,9 @@ const messageRouter = {
   [MESSAGE.PLAYLIST_DELETE_CATEGORY]: async ({ payload }) => deleteCategoryFlow(payload?.categoryId),
   [MESSAGE.PLAYLIST_ADD_VIDEO]: async ({ payload }) => addVideoFlow(payload),
   [MESSAGE.PLAYLIST_DELETE_VIDEO]: async ({ payload }) => deleteVideoFlow(payload),
+  [MESSAGE.PLAYLIST_REORDER_VIDEOS]: async ({ payload }) => reorderVideosFlow(payload),
+  [MESSAGE.PLAYLIST_EXPORT]: async () => exportPlaylistFlow(),
+  [MESSAGE.PLAYLIST_IMPORT]: async ({ payload }) => importPlaylistFlow(payload?.data),
   [MESSAGE.POPUP_SELECT_CATEGORY]: async ({ payload }) => selectCategoryFlow(payload?.categoryId),
   [MESSAGE.POPUP_PLAY_VIDEO]: async ({ payload }) => playVideoFlow(payload),
   [MESSAGE.POPUP_CONTROL]: async ({ payload }) => controlPlaybackFlow(payload?.action, payload?.manual),
@@ -414,6 +419,91 @@ async function deleteVideoFlow(payload) {
     await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch(() => {});
   }
   return ok();
+}
+
+async function reorderVideosFlow(payload) {
+  const categoryId = payload?.categoryId;
+  const videoIds = Array.isArray(payload?.videoIds) ? payload.videoIds : null;
+  if (!categoryId || !videoIds?.length) {
+    return fail("排序数据无效");
+  }
+  const draft = deepClone(await ensureState());
+  const category = draft.categories[categoryId];
+  if (!category) {
+    return fail("分类不存在");
+  }
+  if (category.videos.length !== videoIds.length) {
+    return fail("排序数据不完整");
+  }
+  const videosById = new Map(category.videos.map((video) => [video.id, video]));
+  if (videosById.size !== videoIds.length || videoIds.some((videoId) => !videosById.has(videoId))) {
+    return fail("排序目标不存在");
+  }
+  category.videos = videoIds.map((videoId) => videosById.get(videoId));
+  await setState(draft);
+  return ok();
+}
+
+async function exportPlaylistFlow() {
+  const state = await ensureState();
+  return ok({ data: exportPortablePlaylist(state) });
+}
+
+async function importPlaylistFlow(rawData) {
+  let parsed;
+  try {
+    parsed = parsePortablePlaylist(rawData);
+  } catch (error) {
+    return fail(messageFromError(error, "导入失败"));
+  }
+
+  const currentState = await ensureState();
+  const nextState = createDefaultState();
+  nextState.categories = {};
+  nextState.categoryOrder = [];
+
+  parsed.categories.forEach((inputCategory) => {
+    const category = createCategory(inputCategory.name);
+    const uniqueVideos = [];
+    const seen = new Set();
+    inputCategory.videos.forEach((video) => {
+      const entry = createVideoEntry({
+        bvid: video.bvid,
+        pageIndex: video.page,
+        title: video.title
+      });
+      if (seen.has(entry.id)) {
+        return;
+      }
+      seen.add(entry.id);
+      uniqueVideos.push(entry);
+    });
+    category.videos = uniqueVideos;
+    nextState.categories[category.id] = category;
+    nextState.categoryOrder.push(category.id);
+  });
+
+  if (!nextState.categoryOrder.length) {
+    return fail("导入失败：没有可用分类");
+  }
+
+  nextState.activeCategoryId = nextState.categoryOrder[parsed.activeCategoryIndex] || nextState.categoryOrder[0];
+  nextState.playback = {
+    ...nextState.playback,
+    mode: currentState.playback?.mode || nextState.playback.mode,
+    volume: typeof currentState.playback?.volume === "number" ? currentState.playback.volume : nextState.playback.volume,
+    updatedAt: Date.now()
+  };
+
+  await setState(nextState);
+  await updatePlaybackRefererRules(null);
+  await queueOffscreenMessage({ type: MESSAGE.OFFSCREEN_CONTROL, payload: { action: "stop" } }).catch(() => {});
+
+  const videoCount = parsed.categories.reduce((total, category) => total + category.videos.length, 0);
+  return ok({
+    categoryCount: parsed.categories.length,
+    videoCount
+  });
 }
 
 async function ensureAudioStream(categoryId, videoId, options = {}) {
