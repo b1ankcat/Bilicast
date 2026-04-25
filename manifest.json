@@ -39,7 +39,14 @@
     {
       "resources": [
         "src/shared/messages.js",
-        "src/shared/playlist.js"
+        "src/shared/playlist.js",
+        "src/shared/video.js",
+        "src/content/content-shell.js",
+        "src/content/page-anchor.js",
+        "src/content/playlist-popover.js",
+        "src/content/runtime.js",
+        "src/content/ui.js",
+        "src/content/video-info.js"
       ],
       "matches": ["https://www.bilibili.com/*"]
     }

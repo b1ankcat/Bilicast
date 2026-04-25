@@ -192,35 +192,44 @@ textarea {
   gap: 8px;
 }
 
-.controls-toolbar {
-  display: flex;
+.control-category-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 138px;
   align-items: center;
   gap: 6px;
 }
 
+.controls-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .control-btn {
-  flex: 1;
-  height: 20px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--surface-alt);
   color: var(--text);
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   line-height: 1;
-  padding: 0;
+  padding: 0 4px;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.08);
   position: relative;
 }
 
 .control-btn.primary {
-  flex: 1.2;
-  font-size: 18px;
-  border-radius: 14px;
+  flex: 1.15 1 0;
+  font-size: 15px;
+  border-radius: 11px;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   color: #fff;
   box-shadow: 0 12px 20px rgba(251, 114, 153, 0.35);
@@ -271,7 +280,8 @@ textarea {
 .category-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
 }
 
 .playback-settings__field {
@@ -303,22 +313,23 @@ textarea {
 
 .category-toolbar select {
   flex: 1;
-  border-radius: 10px;
-  padding: 6px 8px;
+  min-width: 0;
+  border-radius: 9px;
+  padding: 5px 7px;
   border: 1px solid var(--border);
   background: var(--surface-alt);
-  font-size: 12px;
+  font-size: 11px;
   color: inherit;
 }
 
 .category-toolbar button {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   border: none;
   background: var(--surface-alt);
   color: var(--text);
-  font-size: 16px;
+  font-size: 14px;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease;
   position: relative;

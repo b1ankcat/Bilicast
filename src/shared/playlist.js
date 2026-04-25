@@ -1,9 +1,19 @@
-﻿import { DEFAULT_CATEGORY_NAME } from "./messages.js";
+import { DEFAULT_CATEGORY_NAME } from "./messages.js";
+import {
+  buildVideoUrl,
+  isValidBvid,
+  makeVideoId,
+  normalizePageIndex,
+  normalizeVideoUrl
+} from "./video.js";
 
 export const STORAGE_KEY = "bilicast.state";
 export const DEFAULT_CATEGORY_ID = "category-default";
 export const PORTABLE_PLAYLIST_SCHEMA = "bilicast.playlist";
 export const PORTABLE_PLAYLIST_VERSION = 1;
+export const STATE_VERSION = 1;
+
+export { buildVideoUrl, makeVideoId, normalizeVideoUrl } from "./video.js";
 
 export function createDefaultCategory() {
   return {
@@ -15,7 +25,9 @@ export function createDefaultCategory() {
 }
 
 export function createCategory(name = DEFAULT_CATEGORY_NAME) {
-  const randomId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+  const randomId = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
   return {
     id: `cat-${randomId}`,
     name: name.trim() || DEFAULT_CATEGORY_NAME,
@@ -26,6 +38,7 @@ export function createCategory(name = DEFAULT_CATEGORY_NAME) {
 
 export function createDefaultState() {
   return {
+    stateVersion: STATE_VERSION,
     categories: {
       [DEFAULT_CATEGORY_ID]: createDefaultCategory()
     },
@@ -39,30 +52,11 @@ export function createDefaultState() {
       status: "paused",
       progress: 0,
       duration: 0,
+      lastResolvedAt: 0,
       volume: 1,
       updatedAt: Date.now()
     }
   };
-}
-
-export function buildVideoUrl({ bvid, pageIndex = 1 }) {
-  const page = Number(pageIndex) || 1;
-  return `https://www.bilibili.com/video/${bvid}?p=${page}&t=0`;
-}
-
-export function normalizeVideoUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    url.searchParams.set("t", "0");
-    return url.toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
-export function makeVideoId({ bvid, page = 1 }) {
-  const normalizedPage = Number(page) || 1;
-  return `${bvid}-p${normalizedPage}`;
 }
 
 export function createVideoEntry(data) {
@@ -71,7 +65,7 @@ export function createVideoEntry(data) {
   return {
     id: videoId,
     bvid: data.bvid,
-    pageIndex: data.pageIndex || 1,
+    pageIndex: normalizePageIndex(data.pageIndex),
     title: data.title,
     author: data.author,
     cover: data.cover,
@@ -96,7 +90,7 @@ export function exportPortablePlaylist(state) {
       name: category.name || DEFAULT_CATEGORY_NAME,
       videos: (category.videos || []).map((video) => ({
         bvid: String(video.bvid || "").trim(),
-        page: Math.max(1, Number(video.pageIndex) || 1),
+        page: normalizePageIndex(video.pageIndex),
         title: String(video.title || "").trim() || buildVideoTitleFallback(video.bvid, video.pageIndex)
       }))
     }));
@@ -122,17 +116,19 @@ export function parsePortablePlaylist(raw) {
   if (!Array.isArray(raw.categories) || raw.categories.length === 0) {
     return { ok: false, message: "播放列表至少包含一个分类" };
   }
+
   const categories = raw.categories.map((category, categoryIndex) => {
     const name = String(category?.name || "").trim() || `${DEFAULT_CATEGORY_NAME} ${categoryIndex + 1}`;
     const inputVideos = Array.isArray(category?.videos) ? category.videos : [];
     const seenVideoIds = new Set();
     const videos = [];
+
     for (const video of inputVideos) {
       const bvid = String(video?.bvid || "").trim();
-      if (!/^BV[\w]+$/i.test(bvid)) {
+      if (!isValidBvid(bvid)) {
         return { ok: false, message: `分类「${name}」存在无效 BV 号` };
       }
-      const page = Math.max(1, Number(video?.page) || 1);
+      const page = normalizePageIndex(video?.page);
       const id = makeVideoId({ bvid, page });
       if (seenVideoIds.has(id)) {
         continue;
@@ -141,12 +137,15 @@ export function parsePortablePlaylist(raw) {
       const title = String(video?.title || "").trim() || buildVideoTitleFallback(bvid, page);
       videos.push({ bvid, page, title });
     }
+
     return { ok: true, category: { name, videos } };
   });
+
   const invalidCategory = categories.find((entry) => entry?.ok === false);
   if (invalidCategory) {
     return invalidCategory;
   }
+
   const rawIndex = Number(raw.activeCategoryIndex);
   const activeCategoryIndex = Number.isInteger(rawIndex)
     ? Math.min(Math.max(rawIndex, 0), categories.length - 1)
@@ -163,5 +162,5 @@ export function parsePortablePlaylist(raw) {
 }
 
 function buildVideoTitleFallback(bvid, pageIndex) {
-  return `${String(bvid || "").trim() || "BV"} P${Math.max(1, Number(pageIndex) || 1)}`;
+  return `${String(bvid || "").trim() || "BV"} P${normalizePageIndex(pageIndex)}`;
 }

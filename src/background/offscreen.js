@@ -1,4 +1,5 @@
-﻿import { MESSAGE } from "../shared/messages.js";
+import { MESSAGE } from "../shared/messages.js";
+import { fail, messageFromError } from "../shared/result.js";
 
 const player = document.getElementById("offscreen-player");
 player.preload = "auto";
@@ -9,17 +10,6 @@ let lastUpdate = 0;
 let suppressPlayerErrorFeedback = false;
 let recoveringFromError = false;
 let sourceState = createEmptySourceState();
-
-function fail(message, payload = {}) {
-  return { ok: false, message, ...payload };
-}
-
-function messageFromError(error, fallback) {
-  if (typeof error === "string") {
-    return error;
-  }
-  return error?.message || fallback;
-}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target !== "offscreen") {
@@ -37,7 +27,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     applyControl(message.payload || {})
       .then((result) => sendResponse?.(result || { ok: true }))
       .catch((error) => {
-        sendResponse?.({ ok: false, message: error?.message || "播放控制失败" });
+        sendResponse?.(fail(messageFromError(error, "播放控制失败")));
       });
     return true;
   }
@@ -137,15 +127,14 @@ function attemptLoad(url, startAt = 0) {
       cleanup();
       resolve();
     };
-    const fail = (error) => {
+    const failLoad = (error) => {
       if (settled) return;
       settled = true;
       cleanup();
-      const detail = typeof error === "string" ? error : error?.message || "音频加载失败";
-      reject(detail);
+      reject(typeof error === "string" ? error : error?.message || "音频加载失败");
     };
     const onError = () => {
-      fail(formatMediaError(player.error) || "音频加载失败");
+      failLoad(formatMediaError(player.error) || "音频加载失败");
     };
     const onLoadedMeta = () => {
       try {
@@ -156,7 +145,7 @@ function attemptLoad(url, startAt = 0) {
         // ignore
       }
     };
-    const timer = setTimeout(() => fail("音频加载超时"), LOAD_TIMEOUT);
+    const timer = setTimeout(() => failLoad("音频加载超时"), LOAD_TIMEOUT);
 
     player.pause();
     player.removeAttribute("src");
@@ -176,12 +165,12 @@ function attemptLoad(url, startAt = 0) {
       }
       const playPromise = player.play();
       if (playPromise && typeof playPromise.then === "function") {
-        playPromise.then(fulfill).catch(fail);
+        playPromise.then(fulfill).catch(failLoad);
       } else {
         fulfill();
       }
     } catch (error) {
-      fail(error);
+      failLoad(error);
     }
   });
 }
@@ -190,11 +179,7 @@ async function applyControl(control) {
   switch (control.action) {
     case "play": {
       if (!player.src) {
-        return {
-          ok: false,
-          reloadRequired: true,
-          message: "当前播放器没有可恢复音源，需重新拉取"
-        };
+        return fail("当前播放器没有可恢复音源，需重新拉取", { reloadRequired: true });
       }
       await player.play();
       return { ok: true };

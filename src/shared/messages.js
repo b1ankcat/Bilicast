@@ -16,6 +16,7 @@
   PLAYLIST_RENAME_CATEGORY: "playlist:renameCategory",
   PLAYLIST_DELETE_CATEGORY: "playlist:deleteCategory",
   PLAYLIST_DELETE_VIDEO: "playlist:deleteVideo",
+  PLAYLIST_DELETE_VIDEOS: "playlist:deleteVideos",
   PLAYLIST_REORDER_VIDEOS: "playlist:reorderVideos",
   PLAYLIST_REORDER_CATEGORIES: "playlist:reorderCategories",
   PLAYLIST_MOVE_VIDEO: "playlist:moveVideo",
