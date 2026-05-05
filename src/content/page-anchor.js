@@ -2,14 +2,10 @@ const PAGE_ANCHOR_SELECTORS = {
   video: [
     ".video-toolbar-left .video-toolbar-left-main > .toolbar-left-item-wrap:nth-child(4)",
     ".video-toolbar-left .video-toolbar-left-main > .toolbar-left-item-wrap:last-child",
-    ".video-toolbar-left .video-toolbar-left-main",
-    ".video-toolbar-left"
   ],
   list: [
     ".video-toolbar-left .video-toolbar-left-main > .toolbar-left-item-wrap:nth-child(4)",
     ".video-toolbar-left .video-toolbar-left-main > .toolbar-left-item-wrap:last-child",
-    ".video-toolbar-left .video-toolbar-left-main",
-    ".video-toolbar-left"
   ]
 };
 

@@ -94,6 +94,13 @@ export function initContentShell({ MESSAGE }) {
       return;
     }
 
+    // Hide button when toolbar has scrolled out of viewport
+    const anchorRect = nextAnchor.getBoundingClientRect();
+    if (anchorRect.bottom < 0) {
+      hideFloatingButton();
+      return;
+    }
+
     if (anchorElement !== nextAnchor) {
       anchorElement = nextAnchor;
       if (!resizeObserver) {
