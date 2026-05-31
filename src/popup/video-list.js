@@ -90,11 +90,6 @@ export function mountVideoList({ elements, actions, feedback, onSelectionChange,
         event.stopPropagation();
         actions.playOrToggleVideo(activeCategory.id, video.id).then(handleResult);
       });
-      actionButton.addEventListener("contextmenu", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        videoActionMenu.open(activeCategory.id, video.id, event.clientX, event.clientY);
-      });
       actionsWrap.appendChild(actionButton);
       card.appendChild(actionsWrap);
 
@@ -103,6 +98,12 @@ export function mountVideoList({ elements, actions, feedback, onSelectionChange,
           return;
         }
         actions.openVideoPage(video.url).then(handleResult);
+      });
+
+      card.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        videoActionMenu.open(activeCategory.id, video.id, event.clientX, event.clientY);
       });
 
       elements.videoListEl.appendChild(card);
